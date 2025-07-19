@@ -6,6 +6,7 @@ from starlette.routing import Mount, Route
 from routes.auth import router as auth_router
 from routes.servers import router as servers_router
 from routes.chat import router as chat_router
+from routes.test import router as test_router, lifespan
 import uvicorn
 from pprint import pprint
 
@@ -24,15 +25,18 @@ middleware = [
         allow_headers=["*"],
     )
 ]
-pprint(auth_router.routes)
+pprint(servers_router.routes)
 routes = [
     Route("/", homepage),
-    Mount("/auth", auth_router)
+    Mount("/auth", auth_router),
+    Mount("/test", test_router),
+    Mount("/servers", servers_router)
 ]
 
 app = Starlette(
     routes=routes,
-    middleware=middleware
+    middleware=middleware,
+    lifespan=lifespan
 )
 
 
