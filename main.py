@@ -30,7 +30,8 @@ routes = [
     Route("/", homepage),
     Mount("/auth", auth_router),
     Mount("/test", test_router),
-    Mount("/servers", servers_router)
+    Mount("/servers", servers_router),
+    Mount("/chat", chat_router)
 ]
 
 app = Starlette(

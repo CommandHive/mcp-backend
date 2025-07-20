@@ -1,11 +1,13 @@
 import contextlib
+import json
 from typing import Dict
 from starlette.routing import Router, Mount, Route
 from starlette.responses import JSONResponse, Response
 from starlette.applications import Starlette
 
 from mcp.server.fastmcp import FastMCP
-from services.supabase_client import supabase_client
+from services.server_db_service import ServerDatabaseService
+from services.server_service import ServerService
 
 
 class DynamicMCPManager:
@@ -17,17 +19,12 @@ class DynamicMCPManager:
         """Load an MCP server from database and execute its code"""
         try:
             # Get server configuration from database by slug
-            query = """
-                SELECT id, name, slug, source_code, status
-                FROM servers 
-                WHERE slug = %s AND status = 'active'
-            """
-            result = supabase_client.execute_query(query, (server_slug,))
-            print(f"result from database query {result}")
-            if not result:
+            server_data = ServerDatabaseService.get_server_with_source_code(server_slug)
+            print(f"result from database query {server_data}")
+            
+            if not server_data:
                 raise ValueError(f"Server with slug '{server_slug}' not found or inactive")
             
-            server_data = dict(result[0])
             source_code = server_data.get('source_code')
             print(f"source code to be executed {source_code}")
             if not source_code:
@@ -119,15 +116,7 @@ async def dynamic_mcp_handler(request):
 async def list_servers_handler(request):
     """List all active servers"""
     try:
-        query = """
-            SELECT id, name, slug, description, version, status
-            FROM servers 
-            WHERE status = 'active'
-            ORDER BY created_at DESC
-        """
-        result = supabase_client.execute_query(query)
-        
-        servers = [dict(row) for row in result] if result else []
+        servers = ServerDatabaseService.list_active_servers()
         
         return JSONResponse({
             "status": "success",
@@ -148,25 +137,13 @@ async def get_server_info_handler(request):
     """Get server information by slug"""
     try:
         server_slug = request.path_params.get('slug')
+        server_data = ServerDatabaseService.get_server_by_slug(server_slug)
         
-        query = """
-            SELECT id, name, slug, description, version, status, created_at
-            FROM servers 
-            WHERE slug = %s
-        """
-        result = supabase_client.execute_query(query, (server_slug,))
-        
-        if not result:
+        if not server_data:
             return JSONResponse({
                 "status": "error",
                 "message": "Server not found"
             }, status_code=404)
-        
-        server_data = dict(result[0])
-        
-        # Convert datetime to string for JSON serialization
-        if 'created_at' in server_data and server_data['created_at']:
-            server_data['created_at'] = server_data['created_at'].isoformat()
         
         return JSONResponse({
             "status": "success",
@@ -180,8 +157,41 @@ async def get_server_info_handler(request):
         }, status_code=500)
 
 
+async def create_mcp_server_handler(request):
+    """Create a new MCP server with generated code"""
+    try:
+        body = await request.json()
+        
+        # Use the server service to create the server
+        server_data = ServerService.create_server(body)
+        
+        return JSONResponse({
+            "status": "success",
+            "message": "MCP server created successfully",
+            "server": server_data
+        }, status_code=201)
+        
+    except ValueError as e:
+        # Validation errors
+        return JSONResponse({
+            "status": "error",
+            "message": str(e)
+        }, status_code=400)
+    except json.JSONDecodeError:
+        return JSONResponse({
+            "status": "error",
+            "message": "Invalid JSON in request body"
+        }, status_code=400)
+    except Exception as e:
+        return JSONResponse({
+            "status": "error",
+            "message": f"Failed to create server: {str(e)}"
+        }, status_code=500)
+
+
 router = Router([
     Route("/", list_servers_handler, methods=["GET"]),
+    Route("/create", create_mcp_server_handler, methods=["POST"]),
     Route("/info/{slug}", get_server_info_handler, methods=["GET"]),
     Route("/{slug:path}", dynamic_mcp_handler, methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 ])
