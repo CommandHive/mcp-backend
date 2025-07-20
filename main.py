@@ -7,6 +7,7 @@ from routes.auth import router as auth_router
 from routes.servers import router as servers_router
 from routes.chat import router as chat_router
 from routes.test import router as test_router, lifespan
+from routes.verify import router as verify_router
 import uvicorn
 from pprint import pprint
 
@@ -31,7 +32,8 @@ routes = [
     Mount("/auth", auth_router),
     Mount("/test", test_router),
     Mount("/servers", servers_router),
-    Mount("/chat", chat_router)
+    Mount("/chat", chat_router),
+    Mount("/verify", verify_router)
 ]
 
 app = Starlette(
