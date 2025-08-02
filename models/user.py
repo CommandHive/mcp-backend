@@ -4,7 +4,7 @@ from pydantic import BaseModel, EmailStr
 
 
 class User(BaseModel):
-    wallet_address: str  # This is our primary key
+    wallet_address: Optional[str] = None  # Now optional
     email: Optional[EmailStr] = None
     username: Optional[str] = None
     display_name: str
@@ -27,3 +27,16 @@ class WalletVerifyRequest(BaseModel):
     wallet_address: str
     signature: str
     nonce: str
+
+
+class NextAuthUserRequest(BaseModel):
+    email: EmailStr
+    name: Optional[str] = None
+    image: Optional[str] = None
+    provider: str  # "email", "google", "github"
+    provider_id: Optional[str] = None  # ID from the OAuth provider
+    username: Optional[str] = None  # For GitHub
+
+
+class EmailAuthRequest(BaseModel):
+    email: EmailStr

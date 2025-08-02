@@ -2,95 +2,71 @@ from starlette.routing import Route, Router
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 from datetime import datetime
-from models.user import WalletAuthRequest, WalletVerifyRequest
+from models.user import User, NextAuthUserRequest
 from services.auth_service import auth_service
-from services.crypto_service import crypto_service
 from services.user_service import user_service
 
 
-async def request_nonce(request: Request):
-    """Request a nonce for wallet authentication."""
-    try:
-        body = await request.json()
-        wallet_request = WalletAuthRequest(**body)
-        
-        # Validate wallet address format
-        if not crypto_service.is_valid_ethereum_address(wallet_request.wallet_address):
-            return JSONResponse(
-                {"success": False, "error": "Invalid wallet address format"},
-                status_code=400
-            )
-        
-        # Generate nonce
-        nonce = auth_service.generate_nonce()
-        
-        # Create or update user with nonce
-        user = await user_service.create_or_update_user_with_nonce(
-            wallet_request.wallet_address, nonce
-        )
-        
-        # Create message to sign
-        message = auth_service.create_sign_message(nonce, wallet_request.wallet_address)
-        
-        return JSONResponse({
-            "success": True,
-            "nonce": nonce,
-            "message": message
-        })
-        
-    except Exception as e:
-        print(f"Error in request_nonce: {e}")
-        return JSONResponse(
-            {"success": False, "error": "Failed to generate nonce"},
-            status_code=500
-        )
+async def auth_status(request: Request):
+    """Auth API status and documentation."""
+    return JSONResponse({
+        "success": True,
+        "message": "CommandHive Next-Auth Integration API",
+        "version": "2.0.0",
+        "description": "Backend API for Next.js frontend using next-auth",
+        "flow": [
+            "1. Frontend handles OAuth with next-auth (Google, GitHub, Email)",
+            "2. Frontend sends user data to POST /auth/session",
+            "3. Backend creates/updates user and returns JWT token",
+            "4. Use Bearer token in Authorization header for authenticated requests"
+        ],
+        "endpoints": {
+            "POST /session": "Create/update user session from next-auth data",
+            "GET /me": "Get current user info (requires Bearer token)",
+            "GET /": "This status endpoint"
+        }
+    })
 
 
-async def verify_wallet(request: Request):
-    """Verify wallet signature and return JWT token."""
+async def create_session(request: Request):
+    """Create or update user session from next-auth data."""
     try:
         body = await request.json()
-        verify_request = WalletVerifyRequest(**body)
+        user_request = NextAuthUserRequest(**body)
         
-        # Validate wallet address format
-        if not crypto_service.is_valid_ethereum_address(verify_request.wallet_address):
+        # Create or update user based on the provider
+        if user_request.provider == "email":
+            user = await user_service.create_or_update_user_by_email(
+                email=user_request.email,
+                display_name=user_request.name or user_request.email
+            )
+        elif user_request.provider == "google":
+            user = await user_service.create_or_update_user_oauth(
+                email=user_request.email,
+                display_name=user_request.name or user_request.email,
+                avatar_url=user_request.image,
+                google_id=user_request.provider_id
+            )
+        elif user_request.provider == "github":
+            user = await user_service.create_or_update_user_oauth(
+                email=user_request.email,
+                display_name=user_request.name or user_request.email,
+                avatar_url=user_request.image,
+                github_id=user_request.provider_id,
+                username=user_request.username
+            )
+        else:
             return JSONResponse(
-                {"success": False, "error": "Invalid wallet address format"},
+                {"success": False, "error": "Unsupported provider"},
                 status_code=400
             )
-        
-        # Get user and validate nonce
-        user = await user_service.get_user_by_wallet(verify_request.wallet_address)
-        if not user or not user.nonce:
-            return JSONResponse(
-                {"success": False, "error": "Invalid or expired nonce"},
-                status_code=400
-            )
-        
-        # Check nonce match
-        if user.nonce != verify_request.nonce:
-            return JSONResponse(
-                {"success": False, "error": "Invalid nonce"},
-                status_code=400
-            )
-        
-        
-        # Verify signature
-        message = auth_service.create_sign_message(verify_request.nonce, verify_request.wallet_address)
-        if not crypto_service.verify_signature(message, verify_request.signature, verify_request.wallet_address):
-            return JSONResponse(
-                {"success": False, "error": "Invalid signature"},
-                status_code=400
-            )
-        
-        # Clear nonce after successful verification
-        await user_service.clear_user_nonce(verify_request.wallet_address)
         
         # Generate JWT token
         token_data = {
-            "sub": user.wallet_address,
-            "wallet_address": user.wallet_address,
-            "display_name": user.display_name
+            "sub": user.email,
+            "email": user.email,
+            "display_name": user.display_name,
+            "provider": user_request.provider
         }
         access_token = auth_service.create_access_token(token_data)
         
@@ -100,17 +76,20 @@ async def verify_wallet(request: Request):
             "token_type": "bearer",
             "expires_in": auth_service.get_jwt_expiration_seconds(),
             "user": {
-                "wallet_address": user.wallet_address,
+                "email": user.email,
                 "display_name": user.display_name,
+                "username": user.username,
+                "avatar_url": user.avatar_url,
                 "subscription_tier": user.subscription_tier,
-                "is_active": user.is_active
+                "is_active": user.is_active,
+                "wallet_address": user.wallet_address
             }
         })
         
     except Exception as e:
-        print(f"Error in verify_wallet: {e}")
+        print(f"Error in create_session: {e}")
         return JSONResponse(
-            {"success": False, "error": "Verification failed"},
+            {"success": False, "error": "Failed to create session"},
             status_code=500
         )
 
@@ -135,16 +114,16 @@ async def get_current_user(request: Request):
                 status_code=401
             )
         
-        # Get wallet address from token
-        wallet_address = payload.get("sub")
-        if not wallet_address:
+        # Get email from token
+        email = payload.get("sub")
+        if not email:
             return JSONResponse(
                 {"success": False, "error": "Invalid token payload"},
                 status_code=401
             )
         
         # Get user from database
-        user = await user_service.get_user_by_wallet(wallet_address)
+        user = await user_service.get_user_by_email(email)
         if not user:
             return JSONResponse(
                 {"success": False, "error": "User not found"},
@@ -154,13 +133,13 @@ async def get_current_user(request: Request):
         return JSONResponse({
             "success": True,
             "user": {
-                "wallet_address": user.wallet_address,
+                "email": user.email,
                 "display_name": user.display_name,
+                "username": user.username,
+                "avatar_url": user.avatar_url,
                 "subscription_tier": user.subscription_tier,
                 "is_active": user.is_active,
-                "email": user.email,
-                "username": user.username,
-                "avatar_url": user.avatar_url
+                "wallet_address": user.wallet_address
             }
         })
         
@@ -172,72 +151,55 @@ async def get_current_user(request: Request):
         )
 
 
-async def logout(request: Request):
-    """Logout endpoint (client-side token removal)."""
-    return JSONResponse({
-        "success": True,
-        "message": "Logged out successfully. Please remove the token from your client."
-    })
-
-
-async def auth_status(request: Request):
-    """Auth API status and documentation."""
-    return JSONResponse({
-        "success": True,
-        "message": "CommandHive Wallet Auth API",
-        "version": "1.0.0",
-        "flow": [
-            "1. Connect wallet via Reown/WalletConnect on frontend",
-            "2. POST /nonce with wallet_address to get nonce",
-            "3. Sign the provided message with wallet",
-            "4. POST /verify with wallet_address, signature, and nonce",
-            "5. Receive JWT token for authenticated requests",
-            "6. Use Bearer token in Authorization header"
-        ],
-        "endpoints": {
-            "POST /nonce": "Request nonce for wallet authentication",
-            "POST /verify": "Verify wallet signature and get JWT token",
-            "GET /me": "Get current user info (requires Bearer token)",
-            "POST /logout": "Logout (client-side token removal)",
-            "GET /": "This status endpoint"
-        }
-    })
-
-
 router = Router(routes=[
     Route("/", auth_status, methods=["GET"]),
-    Route("/nonce", request_nonce, methods=["POST"]),
-    Route("/verify", verify_wallet, methods=["POST"]),
-    Route("/me", get_current_user, methods=["GET"]),
-    Route("/logout", logout, methods=["POST"])
+    Route("/session", create_session, methods=["POST"]),
+    Route("/me", get_current_user, methods=["GET"])
 ])
 
-'''
-Testing it out in LocalHost!
+"""
+1. GET /auth/ - Auth Status
 
-curl -X GET "http://0.0.0.0:8000/auth/" \
-     -H "Accept: application/json"
+  curl -X GET http://localhost:8000/auth/
 
-curl -X POST "http://0.0.0.0:8000/auth/nonce" \
-     -H "Content-Type: application/json" \
-     -d '{"wallet_address":"0x293D3a1D4261570Bf30F0670cD41B5200Dc0A08f"}'
+  2. POST /auth/session - Create Session (Email Provider)
 
-curl -X POST "http://0.0.0.0:8000/auth/verify" \
-     -H "Content-Type: application/json" \
-     -d '{
-           "wallet_address":"0x293D3a1D4261570Bf30F0670cD41B5200Dc0A08f",
-           "nonce":"b000d8633e0d063a2521330776c8ad20",
-           "signature":""
-         }'
-{"success":true,"access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweDI5M2QzYTFkNDI2MTU3MGJmMzBmMDY3MGNkNDFiNTIwMGRjMGEwOGYiLCJ3YWxsZXRfYWRkcmVzcyI6IjB4MjkzZDNhMWQ0MjYxNTcwYmYzMGYwNjcwY2Q0MWI1MjAwZGMwYTA4ZiIsImRpc3BsYXlfbmFtZSI6IlVzZXJfMHgyOTNkM2EiLCJleHAiOjE3NTMwMTg3NDh9.Dh98KTpePE5lns4jKFjBNRrsYc0n6a5TZUGqFz4oMdk","token_type":"bearer","expires_in":86400,"user":{"wallet_address":"0x293d3a1d4261570bf30f0670cd41b5200dc0a08f","display_name":"User_0x293d3a","subscription_tier":"free","is_active":true}}%
+  curl -X POST http://localhost:8000/auth/session \
+    -H "Content-Type: application/json" \
+    -d '{
+      "email": "user@example.com",
+      "name": "John Doe",
+      "provider": "email",
+      "provider_id": "user@example.com"
+    }'
 
-curl -X GET "http://0.0.0.0:8000/auth/me" \
-     -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweDI5M2QzYTFkNDI2MTU3MGJmMzBmMDY3MGNkNDFiNTIwMGRjMGEwOGYiLCJ3YWxsZXRfYWRkcmVzcyI6IjB4MjkzZDNhMWQ0MjYxNTcwYmYzMGYwNjcwY2Q0MWI1MjAwZGMwYTA4ZiIsImRpc3BsYXlfbmFtZSI6IlVzZXJfMHgyOTNkM2EiLCJleHAiOjE3NTMwMTg3NDh9.Dh98KTpePE5lns4jKFjBNRrsYc0n6a5TZUGqFz4oMdk" \
-     -H "Accept: application/json"
+  3. POST /auth/session - Create Session (Google Provider)
 
-curl -X POST "http://0.0.0.0:8000/auth/logout" \
-     -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIweDI5M2QzYTFkNDI2MTU3MGJmMzBmMDY3MGNkNDFiNTIwMGRjMGEwOGYiLCJ3YWxsZXRfYWRkcmVzcyI6IjB4MjkzZDNhMWQ0MjYxNTcwYmYzMGYwNjcwY2Q0MWI1MjAwZGMwYTA4ZiIsImRpc3BsYXlfbmFtZSI6IlVzZXJfMHgyOTNkM2EiLCJleHAiOjE3NTMwMTg3NDh9.Dh98KTpePE5lns4jKFjBNRrsYc0n6a5TZUGqFz4oMdk" \
-     -H "Accept: application/json"
-{"success":true,"message":"Logged out successfully. Please remove the token from your client."}%
+  curl -X POST http://localhost:8000/auth/session \
+    -H "Content-Type: application/json" \
+    -d '{
+      "email": "user@gmail.com",
+      "name": "John Doe",
+      "provider": "google",
+      "provider_id": "google_user_id_123",
+      "image": "https://lh3.googleusercontent.com/a/profile.jpg"
+    }'
 
-'''
+  4. POST /auth/session - Create Session (GitHub Provider)
+
+  curl -X POST http://localhost:8000/auth/session \
+    -H "Content-Type: application/json" \
+    -d '{
+      "email": "user@example.com",
+      "name": "John Doe",
+      "provider": "github",
+      "provider_id": "github_user_id_123",
+      "username": "johndoe",
+      "image": "https://avatars.githubusercontent.com/u/123456"
+    }'
+
+  5. GET /auth/me - Get Current User (requires Bearer token)
+
+  curl -X GET http://localhost:8000/auth/me \
+    -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+"""

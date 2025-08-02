@@ -28,7 +28,7 @@ class SupabaseClient:
         conn = self.get_connection()
         with conn.cursor() as cursor:
             cursor.execute(query, params)
-            if query.strip().upper().startswith('SELECT'):
+            if query.strip().upper().startswith('SELECT') or 'RETURNING' in query.upper():
                 return cursor.fetchall()
             conn.commit()
             return cursor.rowcount

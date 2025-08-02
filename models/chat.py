@@ -6,7 +6,6 @@ from pydantic import BaseModel
 class ChatSession(BaseModel):
     id: Optional[str] = None
     wallet_address: str
-    server_id: str
     title: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

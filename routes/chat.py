@@ -1,154 +1,94 @@
-from starlette.routing import Router
+from starlette.routing import Router, Route
 from starlette.responses import JSONResponse
-import requests
+from services.chat_service import chat_service
+from services.llm_service import llm_service
+from services.auth_service import auth_service
+from services.user_service import user_service
 import json
 
 
-MCP_SERVER_DOCUMENTATION = """
-# MCP Server Creation Guide
-
-MCP (Model Context Protocol) servers are Python applications that provide tools and resources to AI assistants.
-
-## Basic Structure
-
-```python
-import asyncio
-from mcp import Tool
-from mcp.server import Server
-from mcp.tools import Tool
-from typing import Any
-
-app = Server("your-server-name")
-
-@app.tool()
-async def your_tool_name(arg1: str, arg2: int = 10) -> str:
-    \"\"\"
-    Description of what your tool does.
+async def chat(request):
+    print("=== CHAT ENDPOINT HIT ===")
+    print(f"Request method: {request.method}")
+    print(f"Request URL: {request.url}")
+    print(f"Request headers: {dict(request.headers)}")
     
-    Args:
-        arg1: Description of first argument
-        arg2: Description of second argument (optional, defaults to 10)
-    
-    Returns:
-        Description of return value
-    \"\"\"
-    # Your tool implementation here
-    return f"Result: {arg1} with {arg2}"
-
-if __name__ == "__main__":
-    asyncio.run(app.run())
-```
-
-## Key Components
-
-1. **Server**: The main MCP server instance
-2. **Tools**: Functions decorated with @app.tool() that the AI can call
-3. **Resources**: Data or files the AI can access (use @app.resource())
-4. **Prompts**: Pre-defined prompts the AI can use (use @app.prompt())
-
-## Tool Guidelines
-
-- Use clear, descriptive function names
-- Include comprehensive docstrings
-- Add type hints for all parameters
-- Handle errors gracefully
-- Return meaningful results
-
-## Example Tools
-
-```python
-@app.tool()
-async def get_weather(city: str) -> str:
-    \"\"\"Get current weather for a city\"\"\"
-    # Weather API call implementation
-    return f"Weather in {city}: Sunny, 75°F"
-
-@app.tool() 
-async def calculate_tip(bill_amount: float, tip_percentage: float = 0.18) -> dict:
-    \"\"\"Calculate tip and total for a bill\"\"\"
-    tip = bill_amount * tip_percentage
-    total = bill_amount + tip
-    return {"tip": tip, "total": total, "bill": bill_amount}
-```
-
-Always ensure your MCP server follows these patterns for proper integration.
-"""
-
-
-async def generate_mcp_server(request):
     try:
         body = await request.json()
+        print(f"Request body: {body}")
+        
         user_prompt = body.get("prompt", "")
+        chat_session_id = body.get("chat_session_id")
+        user_id = body.get("user_id", "defaul_user_id")
+        
+        print(f"Parsed - prompt: {user_prompt}, chat_session_id: {chat_session_id}, user_id: {user_id}")
         
         if not user_prompt:
+            print("ERROR: No prompt provided")
             return JSONResponse(
                 {"error": "Prompt is required"}, 
                 status_code=400
             )
         
-        # Prepare the inference API request
-        inference_payload = {
-            "function_name": "chat_with_assisstant",
-            "input": {
-                "system": f"""You are an expert MCP server developer. Your task is to create a complete, working MCP server based on the user's requirements.
-
-{MCP_SERVER_DOCUMENTATION}
-
-Guidelines:
-- Generate complete, functional Python code
-- Include all necessary imports
-- Add proper error handling
-- Use descriptive function and variable names
-- Include comprehensive docstrings
-- Follow the MCP server patterns shown above
-- Make the code production-ready
-
-Return ONLY the Python code for the MCP server, no explanations or markdown formatting.""",
-                "messages": [
-                    {
-                        "role": "user", 
-                        "content": user_prompt
-                    }
-                ]
-            }
-        }
-        
-        # Make request to inference API
-        response = requests.post(
-            "https://tensorcloud.commandhive.xyz/api/inference",
-            headers={"Content-Type": "application/json"},
-            json=inference_payload,
-            timeout=30
-        )
-        
-        if response.status_code != 200:
-            return JSONResponse(
-                {"error": "Failed to generate MCP server"}, 
-                status_code=500
+        # Get or create chat session
+        if chat_session_id:
+            print(f"Looking for existing chat session: {chat_session_id}")
+            chat_session = chat_service.get_chat_session(chat_session_id)
+            if not chat_session:
+                print("ERROR: Chat session not found")
+                return JSONResponse(
+                    {"error": "Chat session not found"}, 
+                    status_code=404
+                )
+            print(f"Found existing chat session: {chat_session.id}")
+        else:
+            print("Creating new chat session...")
+            # Create new chat session
+            chat_session = chat_service.create_chat_session(
+                wallet_address=user_id,
+                title="MCP Server Chat"
             )
+            chat_session_id = chat_session.id
+            print(f"Created new chat session: {chat_session_id}")
         
-        result = response.json()
+        # Get conversation history
+        conversation_history = chat_service.get_conversation_history(chat_session_id)
         
-        # Extract the generated MCP server code
-        mcp_server_code = ""
-        if "content" in result and result["content"]:
-            for content_item in result["content"]:
-                if content_item.get("type") == "text":
-                    mcp_server_code += content_item.get("text", "")
+        # Format messages for API
+        messages = llm_service.format_messages_for_api(conversation_history)
+        
+        # Add current user message
+        messages.append({
+            "role": "user",
+            "content": user_prompt
+        })
+        
+        # Save user message to database
+        chat_service.add_message(chat_session_id, "user", user_prompt)
+        
+        # Make request to LLM service
+        result = llm_service.chat_with_assistant(messages)
+        
+        # Extract the structured response
+        structured_response = llm_service.extract_content(result)
+        
+        # Save assistant response to database (store the full structured response)
+        chat_service.add_message(chat_session_id, "assistant", json.dumps(structured_response))
+        
+        # Update session timestamp
+        chat_service.update_session_timestamp(chat_session_id)
         
         return JSONResponse({
-            "mcp_server_code": mcp_server_code,
+            "chat_session_id": chat_session_id,
+            "code": structured_response.get("code", ""),
+            "next_steps": structured_response.get("next_steps", ""),
+            "is_deployable": structured_response.get("is_deployable", False),
             "inference_id": result.get("inference_id"),
             "episode_id": result.get("episode_id"),
             "usage": result.get("usage"),
             "success": True
         })
         
-    except requests.exceptions.RequestException as e:
-        return JSONResponse(
-            {"error": f"Request failed: {str(e)}"}, 
-            status_code=500
-        )
     except json.JSONDecodeError:
         return JSONResponse(
             {"error": "Invalid JSON in request body"}, 
@@ -161,11 +101,101 @@ Return ONLY the Python code for the MCP server, no explanations or markdown form
         )
 
 
+async def get_user_sessions(request):
+    """Get all chat sessions for the authenticated user"""
+    try:
+        # Extract and validate token
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                {"success": False, "error": "Missing or invalid authorization header"},
+                status_code=401
+            )
+        
+        token = auth_header.split(" ")[1]
+        payload = auth_service.verify_token(token)
+        
+        if not payload:
+            return JSONResponse(
+                {"success": False, "error": "Invalid or expired token"},
+                status_code=401
+            )
+        
+        # Get email from token
+        email = payload.get("sub")
+        if not email:
+            return JSONResponse(
+                {"success": False, "error": "Invalid token payload"},
+                status_code=401
+            )
+        
+        # Get user from database to get wallet_address
+        user = await user_service.get_user_by_email(email)
+        if not user:
+            return JSONResponse(
+                {"success": False, "error": "User not found"},
+                status_code=404
+            )
+        
+        # Use wallet_address if available, otherwise use email as identifier
+        identifier = user.wallet_address if user.wallet_address else email
+        
+        # Get chat sessions for user
+        sessions = chat_service.get_user_chat_sessions(identifier)
+        
+        # Format sessions for response
+        sessions_data = []
+        for session in sessions:
+            sessions_data.append({
+                "id": session.id,
+                "title": session.title,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+                "updated_at": session.updated_at.isoformat() if session.updated_at else None
+            })
+        
+        return JSONResponse({
+            "success": True,
+            "sessions": sessions_data,
+            "total": len(sessions_data)
+        })
+        
+    except Exception as e:
+        print(f"Error in get_user_sessions: {e}")
+        return JSONResponse(
+            {"success": False, "error": "Failed to get chat sessions"},
+            status_code=500
+        )
+
+
 async def chat_handler(request):
-    return JSONResponse({"status": "MCP Server Generator API"})
+    return JSONResponse({"status": "MCP Chat API"})
 
 
-router = Router([
-    ("/", chat_handler, ["GET"]),
-    ("/generate-mcp-server", generate_mcp_server, ["POST"])
+router = Router(routes=[
+    Route("/create", chat, methods=["POST"]),
+    Route("/sessions", get_user_sessions, methods=["GET"]),
+    Route("/status", chat_handler, methods=["GET"])
 ])
+
+"""
+1. POST /chat/create - Create new chat or continue existing chat
+
+curl -X POST http://localhost:8000/chat/create \
+      -H "Content-Type: application/json" \
+      -d '{
+        "prompt": "Create an MCP server that can get weather information for any city",
+        "user_id": "user_id_placeholder",
+        "chat_session_id": "chat_session_id_placeholder (optional)"
+      }'
+
+2. GET /chat/sessions - Get all chat sessions for authenticated user
+
+curl -X GET http://localhost:8000/chat/sessions \
+      -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+3. GET /chat/status - Get API status
+
+curl -X GET http://localhost:8000/chat/status
+
+"""
+
