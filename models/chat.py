@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class ChatSession(BaseModel):
     id: Optional[str] = None
-    wallet_address: str
+    user_id: str
     title: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -18,3 +18,8 @@ class ChatMessage(BaseModel):
     content: str
     metadata: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
+
+
+    """
+    rename wallet_address to user_id in ChatSession
+    """

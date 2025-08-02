@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class Server(BaseModel):
     id: Optional[str] = None
-    wallet_address: str
+    user_id: str
     name: str
     slug: str
     description: Optional[str] = None
@@ -104,3 +104,6 @@ class DeploymentLog(BaseModel):
     deployment_config: Optional[Dict[str, Any]] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+
+
+    """rename wallet_address to user_id in Server"""
