@@ -4,13 +4,16 @@ from pydantic import BaseModel, EmailStr
 
 
 class User(BaseModel):
-    wallet_address: Optional[str] = None  # Now optional
+    id: Optional[str] = None  # NextAuth UUID
+    wallet_address: Optional[str] = None
     email: Optional[EmailStr] = None
     username: Optional[str] = None
     display_name: str
     avatar_url: Optional[str] = None
     github_id: Optional[str] = None
     google_id: Optional[str] = None
+    magic_link_token: Optional[str] = None  # For passwordless authentication
+    magic_link_expires_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     is_active: bool = True
@@ -40,3 +43,10 @@ class NextAuthUserRequest(BaseModel):
 
 class EmailAuthRequest(BaseModel):
     email: EmailStr
+
+class MagicLinkRequest(BaseModel):
+    email: EmailStr
+    display_name: Optional[str] = None
+
+class MagicLinkVerifyRequest(BaseModel):
+    token: str

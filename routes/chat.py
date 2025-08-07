@@ -8,23 +8,24 @@ import json
 
 
 async def chat(request):
-    print("=== CHAT ENDPOINT HIT ===")
-    print(f"Request method: {request.method}")
-    print(f"Request URL: {request.url}")
-    print(f"Request headers: {dict(request.headers)}")
-    
+    print(await request.json())
     try:
+        # Get authenticated user from middleware
+        if not hasattr(request.state, 'user') or not request.state.user:
+            return JSONResponse(
+                {"error": "Authentication required"}, 
+                status_code=401
+            )
+        
+        user_data = request.state.user
+        user_id = user_data["id"]  # Use actual user.id instead of email
+        
         body = await request.json()
-        print(f"Request body: {body}")
         
         user_prompt = body.get("prompt", "")
-        chat_session_id = body.get("chat_session_id")
-        user_id = body.get("user_id", "defaul_user_id")
-        
-        print(f"Parsed - prompt: {user_prompt}, chat_session_id: {chat_session_id}, user_id: {user_id}")
+        chat_session_id = body.get("chat_id")
         
         if not user_prompt:
-            print("ERROR: No prompt provided")
             return JSONResponse(
                 {"error": "Prompt is required"}, 
                 status_code=400
@@ -32,31 +33,26 @@ async def chat(request):
         
         # Get or create chat session
         if chat_session_id:
-            print(f"Looking for existing chat session: {chat_session_id}")
             chat_session = chat_service.get_chat_session(chat_session_id)
             if not chat_session:
-                print("ERROR: Chat session not found")
                 return JSONResponse(
                     {"error": "Chat session not found"}, 
                     status_code=404
                 )
-            print(f"Found existing chat session: {chat_session.id}")
         else:
-            print("Creating new chat session...")
             # Create new chat session
             chat_session = chat_service.create_chat_session(
-                wallet_address=user_id,
+                user_id=user_id,
                 title="MCP Server Chat"
             )
             chat_session_id = chat_session.id
-            print(f"Created new chat session: {chat_session_id}")
         
         # Get conversation history
         conversation_history = chat_service.get_conversation_history(chat_session_id)
-        
+        print(f"Conversation history: {conversation_history}")
         # Format messages for API
         messages = llm_service.format_messages_for_api(conversation_history)
-        
+        print(f"Formatted messages: {messages}")
         # Add current user message
         messages.append({
             "role": "user",
@@ -67,13 +63,23 @@ async def chat(request):
         chat_service.add_message(chat_session_id, "user", user_prompt)
         
         # Make request to LLM service
-        result = llm_service.chat_with_assistant(messages)
-        
+        if chat_session_id:
+            result = llm_service.chat_with_assistant(messages, chat_session_id=chat_session_id)
+        else:
+            result = llm_service.chat_with_assistant(messages)
+        print(f"LLM service response: {result}")
         # Extract the structured response
         structured_response = llm_service.extract_content(result)
         
         # Save assistant response to database (store the full structured response)
-        chat_service.add_message(chat_session_id, "assistant", json.dumps(structured_response))
+        chat_service.add_message(
+            session_id=chat_session_id,
+            role="assistant",
+            content=json.dumps(structured_response),
+            code=structured_response.get("code"),
+            next_steps=structured_response.get("next_steps"),
+            is_deployable=structured_response.get("is_deployable")
+  )
         
         # Update session timestamp
         chat_service.update_session_timestamp(chat_session_id)
@@ -137,11 +143,11 @@ async def get_user_sessions(request):
                 status_code=404
             )
         
-        # Use wallet_address if available, otherwise use email as identifier
-        identifier = user.wallet_address if user.wallet_address else email
+        # Use user.id (UUID) as the identifier
+        user_id = user.id
         
         # Get chat sessions for user
-        sessions = chat_service.get_user_chat_sessions(identifier)
+        sessions = chat_service.get_user_chat_sessions(user_id)
         
         # Format sessions for response
         sessions_data = []
@@ -160,9 +166,75 @@ async def get_user_sessions(request):
         })
         
     except Exception as e:
-        print(f"Error in get_user_sessions: {e}")
         return JSONResponse(
             {"success": False, "error": "Failed to get chat sessions"},
+            status_code=500
+        )
+
+
+async def get_session_messages(request):
+    """Get all messages for a specific chat session"""
+    try:
+        # Get authenticated user from middleware
+        if not hasattr(request.state, 'user') or not request.state.user:
+            return JSONResponse(
+                {"error": "Authentication required"}, 
+                status_code=401
+            )
+        
+        user_data = request.state.user
+        user_id = user_data["id"]
+        
+        # Get session_id from path parameters
+        session_id = request.path_params.get("session_id")
+        if not session_id:
+            return JSONResponse(
+                {"error": "Session ID is required"}, 
+                status_code=400
+            )
+        
+        # Verify that the session belongs to the authenticated user
+        chat_session = chat_service.get_chat_session(session_id)
+        if not chat_session:
+            return JSONResponse(
+                {"error": "Chat session not found"}, 
+                status_code=404
+            )
+        
+        if chat_session.user_id != user_id:
+            return JSONResponse(
+                {"error": "Access denied to this chat session"}, 
+                status_code=403
+            )
+        
+        # Get all messages for the session
+        messages = chat_service.get_conversation_history(session_id)
+        
+        # Format messages for response
+        messages_data = []
+        for message in messages:
+            messages_data.append({
+                "id": message.id,
+                "session_id": message.session_id,
+                "role": message.role,
+                "code": message.code,
+                "next_steps": message.next_steps,
+                "is_deployable": message.is_deployable,
+                "content": message.content,
+                "metadata": message.metadata,
+                "created_at": message.created_at.isoformat() if message.created_at else None
+            })
+        
+        return JSONResponse({
+            "success": True,
+            "session_id": session_id,
+            "messages": messages_data,
+            "total": len(messages_data)
+        })
+        
+    except Exception as e:
+        return JSONResponse(
+            {"error": "Failed to get session messages"}, 
             status_code=500
         )
 
@@ -174,6 +246,7 @@ async def chat_handler(request):
 router = Router(routes=[
     Route("/create", chat, methods=["POST"]),
     Route("/sessions", get_user_sessions, methods=["GET"]),
+    Route("/sessions/{session_id}/messages", get_session_messages, methods=["GET"]),
     Route("/status", chat_handler, methods=["GET"])
 ])
 
@@ -193,7 +266,12 @@ curl -X POST http://localhost:8000/chat/create \
 curl -X GET http://localhost:8000/chat/sessions \
       -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
 
-3. GET /chat/status - Get API status
+3. GET /chat/sessions/{session_id}/messages - Get all messages for a specific chat session
+
+curl -X GET http://localhost:8000/chat/sessions/{session_id}/messages \
+      -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+
+4. GET /chat/status - Get API status
 
 curl -X GET http://localhost:8000/chat/status
 

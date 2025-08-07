@@ -8,6 +8,7 @@ from routes.servers import router as servers_router
 from routes.chat import router as chat_router
 from routes.test import router as test_router, lifespan
 from routes.verify import router as verify_router
+from middleware.jwt_middleware import JWTMiddleware
 import uvicorn
 from pprint import pprint
 
@@ -24,7 +25,8 @@ middleware = [
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-    )
+    ),
+    Middleware(JWTMiddleware)
 ]
 pprint(servers_router.routes)
 routes = [
