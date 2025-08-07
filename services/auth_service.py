@@ -15,21 +15,45 @@ class AuthService:
     @staticmethod
     def create_access_token(data: dict) -> str:
         """Create a JWT access token with expiration."""
+        print(f"🔐 [AuthService.create_access_token] Creating JWT token...")
+        print(f"🔐 [AuthService.create_access_token] Input data: {data}")
+        print(f"🔐 [AuthService.create_access_token] JWT_SECRET set: {bool(JWT_SECRET)}")
+        print(f"🔐 [AuthService.create_access_token] JWT_ALGORITHM: {JWT_ALGORITHM}")
+        print(f"🔐 [AuthService.create_access_token] JWT_EXPIRATION_HOURS: {JWT_EXPIRATION_HOURS}")
+        
         to_encode = data.copy()
         # JWT expiration in seconds from now
         import time
         expire = int(time.time()) + (JWT_EXPIRATION_HOURS * 3600)
         to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
-        return encoded_jwt
+        
+        print(f"🔐 [AuthService.create_access_token] Final payload to encode: {to_encode}")
+        print(f"🔐 [AuthService.create_access_token] Expiration timestamp: {expire}")
+        
+        try:
+            encoded_jwt = jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
+            print(f"✅ [AuthService.create_access_token] JWT created successfully (first 20 chars): {encoded_jwt[:20]}...")
+            return encoded_jwt
+        except Exception as e:
+            print(f"❌ [AuthService.create_access_token] Error creating JWT: {e}")
+            raise
 
     @staticmethod
     def verify_token(token: str) -> Optional[dict]:
         """Verify and decode a JWT token."""
+        print(f"🔐 [AuthService.verify_token] Verifying JWT token...")
+        print(f"🔐 [AuthService.verify_token] Token (first 20 chars): {token[:20]}...")
+        print(f"🔐 [AuthService.verify_token] JWT_SECRET set: {bool(JWT_SECRET)}")
+        print(f"🔐 [AuthService.verify_token] JWT_ALGORITHM: {JWT_ALGORITHM}")
+        
         try:
             payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            print(f"✅ [AuthService.verify_token] Token verified successfully")
+            print(f"✅ [AuthService.verify_token] Payload: {payload}")
             return payload
-        except JWTError:
+        except JWTError as e:
+            print(f"❌ [AuthService.verify_token] JWT verification failed: {e}")
+            print(f"❌ [AuthService.verify_token] JWT error type: {type(e)}")
             return None
 
     @staticmethod

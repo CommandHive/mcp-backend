@@ -16,10 +16,8 @@ class ChatMessage(BaseModel):
     session_id: str
     role: str
     content: str
+    code: Optional[str] = None
+    next_steps: Optional[str] = None
+    is_deployable: Optional[bool] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
-
-
-    """
-    rename wallet_address to user_id in ChatSession
-    """

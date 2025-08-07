@@ -39,16 +39,6 @@ class ServerVersion(BaseModel):
     created_at: Optional[datetime] = None
 
 
-class ServerTool(BaseModel):
-    id: Optional[str] = None
-    server_id: str
-    name: str
-    description: Optional[str] = None
-    schema: Optional[Dict[str, Any]] = None
-    is_active: bool = True
-    created_at: Optional[datetime] = None
-
-
 class ServerUsageLog(BaseModel):
     id: Optional[str] = None
     server_id: str
@@ -61,49 +51,5 @@ class ServerUsageLog(BaseModel):
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
     created_at: Optional[datetime] = None
-
-
-class ServerCollection(BaseModel):
-    id: Optional[str] = None
-    wallet_address: str
-    name: str
-    description: Optional[str] = None
-    is_public: bool = False
-    created_at: Optional[datetime] = None
-
-
-class CollectionServer(BaseModel):
-    collection_id: str
-    server_id: str
-    added_at: Optional[datetime] = None
-
-
-class ServerStar(BaseModel):
-    wallet_address: str
-    server_id: str
-    created_at: Optional[datetime] = None
-
-
-class ServerReview(BaseModel):
-    id: Optional[str] = None
-    server_id: str
-    wallet_address: str
-    rating: int
-    comment: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-class DeploymentLog(BaseModel):
-    id: Optional[str] = None
-    server_id: str
-    version: str
-    status: str
-    build_logs: Optional[str] = None
-    error_message: Optional[str] = None
-    deployment_config: Optional[Dict[str, Any]] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-
 
     """rename wallet_address to user_id in Server"""

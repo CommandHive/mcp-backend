@@ -2,34 +2,52 @@ from starlette.routing import Route, Router
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 from datetime import datetime
-from models.user import User, NextAuthUserRequest
+from models.user import User, NextAuthUserRequest, EmailAuthRequest, MagicLinkRequest, MagicLinkVerifyRequest
 from services.auth_service import auth_service
 from services.user_service import user_service
+from services.magic_link_service import magic_link_service
+from services.supabase_client import supabase_client
 
 
-async def auth_status(request: Request):
-    """Auth API status and documentation."""
-    return JSONResponse({
-        "success": True,
-        "message": "CommandHive Next-Auth Integration API",
-        "version": "2.0.0",
-        "description": "Backend API for Next.js frontend using next-auth",
-        "flow": [
-            "1. Frontend handles OAuth with next-auth (Google, GitHub, Email)",
-            "2. Frontend sends user data to POST /auth/session",
-            "3. Backend creates/updates user and returns JWT token",
-            "4. Use Bearer token in Authorization header for authenticated requests"
-        ],
-        "endpoints": {
-            "POST /session": "Create/update user session from next-auth data",
-            "GET /me": "Get current user info (requires Bearer token)",
-            "GET /": "This status endpoint"
-        }
-    })
+
+async def get_current_user(request: Request):
+    """Get current authenticated user info from NextAuth session."""
+    try:
+        # User data is already validated by NextAuthMiddleware and stored in request.state
+        if hasattr(request.state, 'user') and request.state.user:
+            user_data = request.state.user
+            
+            response_data = {
+                "success": True,
+                "user": {
+                    "id": user_data["id"],
+                    "email": user_data["email"],
+                    "display_name": user_data["display_name"],
+                    "username": user_data["username"],
+                    "avatar_url": user_data["avatar_url"],
+                    "subscription_tier": user_data["subscription_tier"],
+                    "is_active": user_data["is_active"],
+                    "wallet_address": user_data["wallet_address"],
+                    "user_id": user_data["id"]
+                }
+            }
+                        
+            return JSONResponse(response_data)
+        else:
+            return JSONResponse(
+                {"success": False, "error": "User not authenticated"},
+                status_code=401
+            )
+        
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": "Failed to get user"},
+            status_code=500
+        )
 
 
 async def create_session(request: Request):
-    """Create or update user session from next-auth data."""
+    """Create or update user session from next-auth data (backward compatibility)."""
     try:
         body = await request.json()
         user_request = NextAuthUserRequest(**body)
@@ -40,7 +58,7 @@ async def create_session(request: Request):
                 email=user_request.email,
                 display_name=user_request.name or user_request.email
             )
-        elif user_request.provider == "google":
+        elif user_request.provider == "google" or user_request.provider == "nextauth":
             user = await user_service.create_or_update_user_oauth(
                 email=user_request.email,
                 display_name=user_request.name or user_request.email,
@@ -68,6 +86,169 @@ async def create_session(request: Request):
             "display_name": user.display_name,
             "provider": user_request.provider
         }
+        
+        access_token = auth_service.create_access_token(token_data)
+        
+        response_data = {
+            "success": True,
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": auth_service.get_jwt_expiration_seconds(),
+            "user": {
+                "email": user.email,
+                "display_name": user.display_name,
+                "username": user.username,
+                "avatar_url": user.avatar_url,
+                "subscription_tier": user.subscription_tier,
+                "is_active": user.is_active,
+                "wallet_address": user.wallet_address,
+                "user_id": user.id
+            }
+        }
+        
+        return JSONResponse(response_data)
+        
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": "Failed to create session"},
+            status_code=500
+        )
+
+
+async def auth_status(request: Request):
+    """Get authentication status."""
+    return JSONResponse({"success": True, "message": "Auth service is running"})
+
+
+async def send_magic_link(request: Request):
+    """Send magic link to user's email for passwordless authentication."""
+    try:
+        body = await request.json()
+        magic_request = MagicLinkRequest(**body)
+        
+        
+        # Send magic link
+        result = await magic_link_service.send_magic_link(
+            email=magic_request.email,
+            display_name=magic_request.display_name
+        )
+        
+        return JSONResponse(result)
+        
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": "Failed to send magic link"},
+            status_code=500
+        )
+
+
+async def verify_magic_link(request: Request):
+    """Verify magic link token and return JWT."""
+    try:
+        body = await request.json()
+        verify_request = MagicLinkVerifyRequest(**body)
+        
+        
+        # Verify magic link token
+        result = await magic_link_service.verify_magic_token(verify_request.token)
+        
+        if result["success"]:
+            return JSONResponse(result)
+        else:
+            return JSONResponse(result, status_code=401)
+        
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": "Failed to verify magic link"},
+            status_code=500
+        )
+
+
+async def github_oauth_callback(request: Request):
+    """Handle GitHub OAuth callback with authorization code."""
+    try:
+        body = await request.json()
+        code = body.get("code")
+        state = body.get("state")
+        
+        if not code:
+            return JSONResponse(
+                {"success": False, "error": "Authorization code required"},
+                status_code=400
+            )
+        
+        import requests
+        import os
+        
+        # Exchange code for access token
+        token_response = requests.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            data={
+                "client_id": os.getenv("GITHUB_ID"),
+                "client_secret": os.getenv("GITHUB_SECRET"),
+                "code": code,
+            }
+        )
+        
+        token_data = token_response.json()
+        
+        if "error" in token_data:
+            return JSONResponse(
+                {"success": False, "error": f"GitHub OAuth error: {token_data.get('error_description', token_data['error'])}"},
+                status_code=400
+            )
+        
+        access_token = token_data.get("access_token")
+        
+        # Get user info
+        user_response = requests.get(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/vnd.github.v3+json",
+            }
+        )
+        
+        user_data = user_response.json()
+        
+        # Get user email if not public
+        email = user_data.get("email")
+        if not email:
+            email_response = requests.get(
+                "https://api.github.com/user/emails",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                }
+            )
+            emails = email_response.json()
+            primary_email = next((e for e in emails if e.get("primary")), emails[0] if emails else None)
+            email = primary_email.get("email") if primary_email else None
+        
+        if not email:
+            return JSONResponse(
+                {"success": False, "error": "Unable to get email from GitHub account"},
+                status_code=400
+            )
+        
+        # Create or update user
+        user = await user_service.create_or_update_user_oauth(
+            email=email,
+            display_name=user_data.get("name") or user_data.get("login"),
+            avatar_url=user_data.get("avatar_url"),
+            github_id=str(user_data.get("id")),
+            username=user_data.get("login")
+        )
+        
+        # Generate JWT token
+        token_data = {
+            "sub": user.email,
+            "email": user.email,
+            "display_name": user.display_name,
+            "provider": "github"
+        }
+        
         access_token = auth_service.create_access_token(token_data)
         
         return JSONResponse({
@@ -82,56 +263,79 @@ async def create_session(request: Request):
                 "avatar_url": user.avatar_url,
                 "subscription_tier": user.subscription_tier,
                 "is_active": user.is_active,
-                "wallet_address": user.wallet_address
+                "wallet_address": user.wallet_address,
+                "user_id": user.id
             }
         })
         
     except Exception as e:
-        print(f"Error in create_session: {e}")
         return JSONResponse(
-            {"success": False, "error": "Failed to create session"},
+            {"success": False, "error": "GitHub OAuth authentication failed"},
             status_code=500
         )
 
 
-async def get_current_user(request: Request):
-    """Get current authenticated user info."""
+async def oauth_callback(request: Request):
+    """Handle OAuth callbacks for Google/GitHub."""
     try:
-        # Extract and validate token
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        body = await request.json()
+        provider = body.get("provider")  # "google" or "github"
+        user_data = body.get("user")  # OAuth user data
+        
+        if not provider or not user_data:
             return JSONResponse(
-                {"success": False, "error": "Missing or invalid authorization header"},
-                status_code=401
+                {"success": False, "error": "Invalid OAuth data"},
+                status_code=400
             )
         
-        token = auth_header.split(" ")[1]
-        payload = auth_service.verify_token(token)
+        email = user_data.get("email")
+        name = user_data.get("name", email)
+        avatar_url = user_data.get("picture") or user_data.get("avatar_url")
+        provider_id = user_data.get("id") or user_data.get("sub")
         
-        if not payload:
-            return JSONResponse(
-                {"success": False, "error": "Invalid or expired token"},
-                status_code=401
-            )
-        
-        # Get email from token
-        email = payload.get("sub")
         if not email:
             return JSONResponse(
-                {"success": False, "error": "Invalid token payload"},
-                status_code=401
+                {"success": False, "error": "Email required from OAuth provider"},
+                status_code=400
             )
         
-        # Get user from database
-        user = await user_service.get_user_by_email(email)
-        if not user:
-            return JSONResponse(
-                {"success": False, "error": "User not found"},
-                status_code=404
+        # Create or update user based on provider
+        if provider == "google":
+            user = await user_service.create_or_update_user_oauth(
+                email=email,
+                display_name=name,
+                avatar_url=avatar_url,
+                google_id=str(provider_id)
             )
+        elif provider == "github":
+            user = await user_service.create_or_update_user_oauth(
+                email=email,
+                display_name=name,
+                avatar_url=avatar_url,
+                github_id=str(provider_id),
+                username=user_data.get("login") or user_data.get("username")
+            )
+        else:
+            return JSONResponse(
+                {"success": False, "error": "Unsupported OAuth provider"},
+                status_code=400
+            )
+        
+        # Generate JWT token
+        token_data = {
+            "sub": user.email,
+            "email": user.email,
+            "display_name": user.display_name,
+            "provider": provider
+        }
+        
+        access_token = auth_service.create_access_token(token_data)
         
         return JSONResponse({
             "success": True,
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": auth_service.get_jwt_expiration_seconds(),
             "user": {
                 "email": user.email,
                 "display_name": user.display_name,
@@ -139,28 +343,65 @@ async def get_current_user(request: Request):
                 "avatar_url": user.avatar_url,
                 "subscription_tier": user.subscription_tier,
                 "is_active": user.is_active,
-                "wallet_address": user.wallet_address
+                "wallet_address": user.wallet_address,
+                "user_id": user.id
             }
         })
         
     except Exception as e:
-        print(f"Error in get_current_user: {e}")
         return JSONResponse(
-            {"success": False, "error": "Failed to get user"},
+            {"success": False, "error": "OAuth authentication failed"},
             status_code=500
         )
 
 
 router = Router(routes=[
     Route("/", auth_status, methods=["GET"]),
-    Route("/session", create_session, methods=["POST"]),
+    Route("/magic-link", send_magic_link, methods=["POST"]),
+    Route("/verify", verify_magic_link, methods=["POST"]),
+    Route("/oauth", oauth_callback, methods=["POST"]),
+    Route("/oauth/github", github_oauth_callback, methods=["POST"]),
+    Route("/session", create_session, methods=["POST"]),  # Restored for backward compatibility
     Route("/me", get_current_user, methods=["GET"])
 ])
 
 """
-1. GET /auth/ - Auth Status
+Authentication API Endpoints
 
+1. GET /auth/ - Auth Status
   curl -X GET http://localhost:8000/auth/
+
+2. POST /auth/magic-link - Send Magic Link
+  curl -X POST http://localhost:8000/auth/magic-link \
+    -H "Content-Type: application/json" \
+    -d '{
+      "email": "user@example.com",
+      "display_name": "John Doe"
+    }'
+
+3. POST /auth/verify - Verify Magic Link Token
+  curl -X POST http://localhost:8000/auth/verify \
+    -H "Content-Type: application/json" \
+    -d '{
+      "token": "magic_link_token_here"
+    }'
+
+4. POST /auth/oauth - OAuth Authentication (Google/GitHub)
+  curl -X POST http://localhost:8000/auth/oauth \
+    -H "Content-Type: application/json" \
+    -d '{
+      "provider": "google",
+      "user": {
+        "id": "google_user_id",
+        "email": "user@gmail.com",
+        "name": "John Doe",
+        "picture": "https://example.com/avatar.jpg"
+      }
+    }'
+
+5. GET /auth/me - Get Current User (requires Bearer token)
+  curl -X GET http://localhost:8000/auth/me \
+    -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
 
   2. POST /auth/session - Create Session (Email Provider)
 
