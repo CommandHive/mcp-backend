@@ -3,7 +3,15 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load environment-specific .env file
+environment = os.getenv("ENVIRONMENT", "local")
+env_file = f".env.{environment}"
+
+# Try to load the environment-specific file, fallback to .env
+if os.path.exists(env_file):
+    load_dotenv(env_file)
+else:
+    load_dotenv()
 
 
 class SupabaseClient:
