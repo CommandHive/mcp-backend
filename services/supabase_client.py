@@ -33,6 +33,8 @@ class SupabaseClient:
     
     def execute_query(self, query: str, params=None):
         print("Connecting to:", self.database_url)
+        print(f"[DEBUG] Executing query: {query}")
+        print(f"[DEBUG] With params: {params}")
         conn = self.get_connection()
         with conn.cursor() as cursor:
             cursor.execute(query, params)

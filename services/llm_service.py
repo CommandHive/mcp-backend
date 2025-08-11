@@ -3,6 +3,13 @@ import json
 import os
 import re
 from typing import List, Dict, Any, Optional
+from prompts.constants import (
+    CHAT_SESSION_SYSTEM_PROMPT,
+    MCP_SERVER_GENERATION_SYSTEM_PROMPT,
+    FALLBACK_NEXT_STEPS_REVIEW,
+    FALLBACK_NEXT_STEPS_NO_RESPONSE,
+    FALLBACK_NEXT_STEPS_ERROR
+)
 
 
 class LLMService:
@@ -18,134 +25,32 @@ class LLMService:
             "X-Title": "MCP Backend"
         }
 
-    def chat_with_assistant(self, messages: List[Dict[str, str]],chat_session_id: Optional[str], system_prompt: Optional[str] = None) -> Dict[str, Any]:
+    def chat_with_assistant(self, messages: List[Dict[str, str]], chat_session_id: Optional[str], is_new_session: bool = False) -> Dict[str, Any]:
         """
         Send a chat request to the OpenRouter API
         
         Args:
             messages: List of message objects with 'role' and 'content' keys
-            system_prompt: Optional system prompt to guide the assistant
+            chat_session_id: The chat session ID (if any)
+            is_new_session: True if this is a new session, False if continuing existing
         
         Returns:
             Dict containing the API response
         """
         
-        # Default system prompt for MCP server generation
-        
-        if chat_session_id:
-            default_system = f"""You are an expert MCP server developer. Your task is to create a complete, working MCP server based on the user's requirements. return the response in the format, 
-            <code> keep it empty if same as before, otherwise add / remove some changes. </code>
-            <next_steps> next message for the user, cannot be empty </next_steps>
-            <is_deployable>true/false </is_deployable>
-
-            Guidelines:
-            - code: Generate complete, functional Python code with all necessary imports, error handling, descriptive names, comprehensive docstrings, and production-ready implementation. Keep it empty if the prompt is not relevant to the changes in Code. 
-            - next_steps: If code needs external dependencies, API keys, or deployment steps, explain what's needed. If fully complete and deployable, congratulate the user. Appropiate response to the user as per the prompt to be displayed in the chat. 
-            - is_deployable: Set to true only if the MCP server is complete and can be deployed without additional requirements
-
-            Always return valid XML in this exact format.
-            """
+        # Use appropriate system prompt based on whether this is a new session
+        if is_new_session:
+            default_system = MCP_SERVER_GENERATION_SYSTEM_PROMPT
         else:
-            default_system = """
-        You are an expert MCP server developer. Your task is to create a complete, working MCP server based on the user's requirements.
+            default_system = CHAT_SESSION_SYSTEM_PROMPT
 
-            # MCP Server Creation Guide
-
-            MCP (Model Context Protocol) servers are Python applications that provide tools and resources to AI assistants.
-
-            ## Basic Structure
-
-            ```python
-            import asyncio
-            from mcp import Tool
-            from mcp.server import Server
-            from mcp.tools import Tool
-            from typing import Any
-
-            app = Server("your-server-name")
-
-            @app.tool()
-            async def your_tool_name(arg1: str, arg2: int = 10) -> str:
-                \"\"\"
-                Description of what your tool does.
-                
-                Args:
-                    arg1: Description of first argument
-                    arg2: Description of second argument (optional, defaults to 10)
-                
-                Returns:
-                    Description of return value
-                \"\"\"
-                # Your tool implementation here
-                return f"Result: {arg1} with {arg2}"
-
-            if __name__ == "__main__":
-                asyncio.run(app.run())
-            ```
-
-            ## Key Components
-
-            1. **Server**: The main MCP server instance
-            2. **Tools**: Functions decorated with @app.tool() that the AI can call
-            3. **Resources**: Data or files the AI can access (use @app.resource())
-            4. **Prompts**: Pre-defined prompts the AI can use (use @app.prompt())
-
-            ## Tool Guidelines
-
-            - Use clear, descriptive function names
-            - Include comprehensive docstrings
-            - Add type hints for all parameters
-            - Handle errors gracefully
-            - Return meaningful results
-
-            ## Example Tools
-
-            ```python
-            @app.tool()
-            async def get_weather(city: str) -> str:
-                \"\"\"Get current weather for a city\"\"\"
-                # Weather API call implementation
-                return f"Weather in {city}: Sunny, 75°F"
-
-            @app.tool() 
-            async def calculate_tip(bill_amount: float, tip_percentage: float = 0.18) -> dict:
-                \"\"\"Calculate tip and total for a bill\"\"\"
-                tip = bill_amount * tip_percentage
-                total = bill_amount + tip
-                return {"tip": tip, "total": total, "bill": bill_amount}
-            ```
-
-            Always ensure your MCP server follows these patterns for proper integration.
-
-            ## Response Format
-
-            You MUST respond with XML containing exactly these three fields:
-
-            <code>
-            // Complete Python MCP server code here
-            </code>
-
-            <next_steps>
-            Clear instructions for what the user needs to do next to deploy this MCP server, or congratulations message if objective is fully achieved
-            </next_steps>
-
-            <is_deployable>
-            true/false
-            </is_deployable>
-
-            Guidelines:
-            - code: Generate complete, functional Python code with all necessary imports, error handling, descriptive names, comprehensive docstrings, and production-ready implementation
-            - next_steps: If code needs external dependencies, API keys, or deployment steps, explain what's needed. If fully complete and deployable, congratulate the user
-            - is_deployable: Set to true only if the MCP server is complete and can be deployed without additional requirements
-
-            Always return valid XML in this exact format."""
-
+        print(f"[chat_with_assistant] Using system prompt: {default_system}")
         # Prepare messages with system prompt
         api_messages = []
-        if system_prompt or default_system:
+        if default_system:
             api_messages.append({
                 "role": "system",
-                "content": system_prompt or default_system
+                "content": default_system
             })
         
         api_messages.extend(messages)
@@ -157,6 +62,7 @@ class LLMService:
         }
         
         try:
+            print(f"present payload: {payload}")
             response = requests.post(
                 self.inference_url,
                 headers=self.default_headers,
@@ -226,7 +132,7 @@ class LLMService:
                             # Fallback: return raw content with default structure
                             return {
                                 "code": content,
-                                "next_steps": "Please review the generated code and make any necessary adjustments.",
+                                "next_steps": FALLBACK_NEXT_STEPS_REVIEW,
                                 "is_deployable": False
                             }
                     except Exception as e:
@@ -235,21 +141,21 @@ class LLMService:
                         # Fallback: return raw content with default structure
                         return {
                             "code": content,
-                            "next_steps": "Please review the generated code and make any necessary adjustments.",
+                            "next_steps": FALLBACK_NEXT_STEPS_REVIEW,
                             "is_deployable": False
                         }
             
             print("[extract_content] No valid content found in API response")
             return {
                 "code": "",
-                "next_steps": "No response generated. Please try again.",
+                "next_steps": FALLBACK_NEXT_STEPS_NO_RESPONSE,
                 "is_deployable": False
             }
         except (KeyError, IndexError, TypeError) as e:
             print(f"[extract_content] Error parsing API response structure: {e}")
             return {
                 "code": "",
-                "next_steps": "Error parsing response. Please try again.",
+                "next_steps": FALLBACK_NEXT_STEPS_ERROR,
                 "is_deployable": False
             }
 

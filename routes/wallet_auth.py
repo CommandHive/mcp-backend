@@ -6,6 +6,7 @@ from models.user import WalletAuthRequest, WalletVerifyRequest
 from services.auth_service import auth_service
 from services.crypto_service import crypto_service
 from services.user_service import user_service
+from prompts.constants import LOGOUT_SUCCESS_MESSAGE
 
 
 async def request_nonce(request: Request):
@@ -176,7 +177,7 @@ async def logout(request: Request):
     """Logout endpoint (client-side token removal)."""
     return JSONResponse({
         "success": True,
-        "message": "Logged out successfully. Please remove the token from your client."
+        "message": LOGOUT_SUCCESS_MESSAGE
     })
 
 

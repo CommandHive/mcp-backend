@@ -252,12 +252,16 @@ class UserService:
                     INSERT INTO users (email, display_name, created_at, updated_at, 
                                      is_active, subscription_tier)
                     VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
                 """
-                supabase_client.execute_query(query, (
+                result = supabase_client.execute_query(query, (
                     email, display_name, current_time, current_time, True, "free"
                 ))
                 
+                user_id = result[0]['id'] if result else None
+                
                 return User(
+                    id=user_id,
                     email=email,
                     display_name=display_name,
                     created_at=current_time,
@@ -316,13 +320,17 @@ class UserService:
                                      github_id, username, created_at, updated_at, 
                                      is_active, subscription_tier)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
                 """
-                supabase_client.execute_query(query, (
+                result = supabase_client.execute_query(query, (
                     email, display_name, avatar_url, google_id, github_id, 
                     username, current_time, current_time, True, "free"
                 ))
                 
+                user_id = result[0]['id'] if result else None
+                
                 return User(
+                    id=user_id,
                     email=email,
                     display_name=display_name,
                     avatar_url=avatar_url,

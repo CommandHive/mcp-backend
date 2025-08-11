@@ -17,7 +17,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
         '/auth/oauth',
         '/auth/session',  # Keep for backward compatibility
         '/test/',
-        '/verify/'
+        '/verify/',
+        '/chat/status'
+    }
+    
+    # Protected endpoints that require authentication (takes precedence over public prefixes)
+    PROTECTED_ENDPOINTS = {
+        '/auth/me'
     }
     
     # Exact path matches that don't require authentication
@@ -102,7 +108,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
     
     def is_public_endpoint(self, path: str) -> bool:
         """Check if endpoint is public (doesn't require authentication)."""
-        # Check exact matches first
+        # Check if path is explicitly protected first
+        if path in self.PROTECTED_ENDPOINTS:
+            return False
+            
+        # Check exact matches
         if path in self.EXACT_PUBLIC_ENDPOINTS:
             return True
             

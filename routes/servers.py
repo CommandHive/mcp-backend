@@ -195,3 +195,53 @@ router = Router([
     Route("/info/{slug}", get_server_info_handler, methods=["GET"]),
     Route("/{slug:path}", dynamic_mcp_handler, methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 ])
+
+
+# -------------------------------------------------------------
+# cURL examples for /servers routes (requires JWT Authorization)
+# -------------------------------------------------------------
+#
+# Helpful env vars for brevity:
+#   export BASE_URL="http://localhost:8000"
+#   export JWT="<YOUR_JWT_TOKEN>"
+#
+# 1) List active servers
+#   curl -s -X GET "$BASE_URL/servers/" \
+#        -H "Authorization: Bearer $JWT"
+#
+# 2) Get server info by slug
+#   curl -s -X GET "$BASE_URL/servers/info/<slug>" \
+#        -H "Authorization: Bearer $JWT"
+#
+# 3) Create a new MCP server
+#   curl -s -X POST "$BASE_URL/servers/create" \
+#        -H "Authorization: Bearer $JWT" \
+#        -H "Content-Type: application/json" \
+#        -d '{
+#              "name": "Demo Server",
+#              "wallet_address": "0x0000000000000000000000000000000000000000",
+#              "source_code": "demo_server = FastMCP('demo-server')",
+#              "description": "My demo MCP server",
+#              "version": "1.0.0",
+#              "visibility": "private",
+#              "category": "general",
+#              "tags": ["demo", "test"]
+#            }'
+#
+#    Notes:
+#    - Required fields: name, source_code, wallet_address
+#    - The source_code must create a FastMCP instance (e.g., a variable assigned to FastMCP(...)).
+#
+# 4) Proxy requests to a dynamic MCP server (generic pass-through)
+#    Root of MCP app (GET):
+#      curl -s -X GET "$BASE_URL/servers/<slug>/mcp" \
+#           -H "Authorization: Bearer $JWT"
+#
+#    Example POST to an MCP subpath:
+#      curl -s -X POST "$BASE_URL/servers/<slug>/mcp/some/path" \
+#           -H "Authorization: Bearer $JWT" \
+#           -H "Content-Type: application/json" \
+#           -d '{"foo":"bar"}'
+#
+#    Supported methods for the dynamic route: GET, POST, PUT, DELETE, PATCH
+# -------------------------------------------------------------

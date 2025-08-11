@@ -3,6 +3,7 @@ import secrets
 from datetime import datetime
 from typing import Optional
 from jose import JWTError, jwt
+from prompts.constants import WALLET_SIGN_MESSAGE_TEMPLATE
 
 
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-this")
@@ -64,7 +65,7 @@ class AuthService:
     @staticmethod
     def create_sign_message(nonce: str, wallet_address: str) -> str:
         """Create the message that users need to sign for authentication."""
-        return f"Please sign this message to authenticate with CommandHive , nonce: {nonce} and wallet: {wallet_address}"
+        return WALLET_SIGN_MESSAGE_TEMPLATE.format(nonce=nonce, wallet_address=wallet_address)
     
 
     @staticmethod
