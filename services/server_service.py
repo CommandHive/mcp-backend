@@ -12,13 +12,13 @@ class ServerService:
         errors = []
         
         # Check required fields
-        required_fields = ["name", "source_code", "wallet_address"]
+        required_fields = ["name", "source_code", "user_id"]
         for field in required_fields:
             if field not in data or not data[field]:
                 errors.append(f"Missing required field: {field}")
         
         # Validate name
-        if "name" in data:
+        if "name" in data and data["name"] is not None:
             name = data["name"].strip()
             if len(name) < 2:
                 errors.append("Server name must be at least 2 characters long")
@@ -26,19 +26,21 @@ class ServerService:
                 errors.append("Server name cannot exceed 100 characters")
         
         # Validate source_code
-        if "source_code" in data:
+        if "source_code" in data and data["source_code"] is not None:
             source_code = data["source_code"].strip()
             if len(source_code) < 10:
                 errors.append("Source code is too short")
         
-        # Validate wallet_address
-        if "wallet_address" in data:
-            wallet_address = data["wallet_address"].strip()
-            if not wallet_address.startswith("0x") or len(wallet_address) != 42:
-                errors.append("Invalid wallet address format")
+        # Validate user_id (should be a valid UUID)
+        if "user_id" in data and data["user_id"] is not None:
+            try:
+                import uuid
+                uuid.UUID(str(data["user_id"]))
+            except (ValueError, TypeError):
+                errors.append("Invalid user_id format")
         
         # Validate version format if provided
-        if "version" in data and data["version"]:
+        if "version" in data and data["version"] is not None:
             version = data["version"].strip()
             if not re.match(r'^\d+\.\d+\.\d+$', version):
                 errors.append("Version must be in format x.y.z (e.g., 1.0.0)")
@@ -95,14 +97,14 @@ class ServerService:
         
         # Prepare server data
         server_data = {
-            "name": input_data["name"].strip(),
+            "name": (input_data["name"] or "").strip(),
             "slug": slug,
-            "source_code": input_data["source_code"].strip(),
-            "wallet_address": input_data["wallet_address"].strip(),
-            "description": input_data.get("description", "").strip(),
-            "version": input_data.get("version", "1.0.0").strip(),
+            "source_code": (input_data["source_code"] or "").strip(),
+            "user_id": input_data["user_id"],
+            "description": (input_data.get("description") or "").strip(),
+            "version": (input_data.get("version") or "1.0.0").strip(),
             "visibility": input_data.get("visibility", "private"),
-            "category": input_data.get("category", "general").strip(),
+            "category": (input_data.get("category") or "general").strip(),
             "status": "active"  # Set as active by default
         }
         

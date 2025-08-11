@@ -33,7 +33,7 @@ class ServerDatabaseService:
         
         insert_query = """
             INSERT INTO servers (
-                id, wallet_address, name, slug, description, version, 
+                id, user_id, name, slug, description, version, 
                 status, visibility, source_code, tags, category, 
                 total_requests, is_featured, created_at, updated_at
             ) VALUES (
@@ -46,7 +46,7 @@ class ServerDatabaseService:
         
         supabase_client.execute_query(insert_query, (
             server_id,
-            server_data['wallet_address'],
+            server_data['user_id'],
             server_data['name'],
             server_data['slug'],
             server_data.get('description', ''),
