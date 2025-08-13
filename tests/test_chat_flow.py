@@ -255,3 +255,258 @@ if __name__ == "__main__":
     else:
         print("❌ Please provide a JWT token as argument")
         print("Usage: python test_chat_flow.py <JWT_TOKEN>")
+
+ """
+💬 PHASE 2: Chat Flow Tests
+----------------------------------------
+🚀 Starting Chat API Flow Tests
+==================================================
+🔍 Testing chat status...
+Status: 200
+Response: {'status': 'MCP Chat API'}
+
+💬 Testing create chat...
+Status: 200
+Response: {
+  "chat_session_id": "4005f2e6-8577-4b11-9ae1-e9e476de2989",
+  "code": "from mcp.server.fastmcp import FastMCP\n\nhello_world_mcp = FastMCP(name=\"HelloWorldServer\", stateless_http=True)\n\n@hello_world_mcp.tool()\ndef hello_world() -> str:\n    \"\"\"Return a simple 'Hello, World!' greeting.\"\"\"\n    return \"Hello, World!\"",
+  "next_steps": "Congratulations! Your Hello World MCP server is complete and ready to deploy. This simple server provides a hello_world function that returns \"Hello, World!\" when called. You can now deploy this server and connect it to any MCP-compatible AI assistant.",
+  "is_deployable": true,
+  "tools": [
+    {
+      "instance": "hello_world_mcp",
+      "name": "hello_world",
+      "description": "Return a simple 'Hello, World!' greeting.",
+      "parameters": {
+        "properties": {},
+        "title": "hello_worldArguments",
+        "type": "object"
+      },
+      "is_async": false,
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "hello_worldOutput",
+        "type": "object"
+      }
+    }
+  ],
+  "inference_id": null,
+  "episode_id": null,
+  "usage": {
+    "prompt_tokens": 732,
+    "completion_tokens": 174,
+    "total_tokens": 906
+  },
+  "success": true
+}
+Chat Session ID: 4005f2e6-8577-4b11-9ae1-e9e476de2989
+Generated Code Preview: from mcp.server.fastmcp import FastMCP
+
+hello_world_mcp = FastMCP(name="HelloWorldServer", stateless_http=True)
+
+@hello_world_mcp.tool()
+def hello_world() -> str:
+    "Return a simple 'Hello, World!...
+Available Tools: ['hello_world']
+
+💬 Testing continue chat (Session: 4005f2e6-8577-4b11-9ae1-e9e476de2989)...
+Status: 200
+Response: {
+  "chat_session_id": "4005f2e6-8577-4b11-9ae1-e9e476de2989",
+  "code": "from mcp.server.fastmcp import FastMCP\nfrom datetime import datetime\n\nhello_world_mcp = FastMCP(name=\"HelloWorldServer\", stateless_http=True)\n\n@hello_world_mcp.tool()\ndef hello_world() -> str:\n    \"\"\"Return a simple 'Hello, World!' greeting.\"\"\"\n    return \"Hello, World!\"\n\n@hello_world_mcp.tool()\ndef get_current_timestamp() -> str:\n    \"\"\"Get the current timestamp in ISO 8601 format.\"\"\"\n    return datetime.now().isoformat()",
+  "next_steps": "Perfect! I've added a `get_current_timestamp()` function to your MCP server. This function returns the current date and time in ISO 8601 format. Your server now has two tools:\n1. `hello_world()` - Returns \"Hello, World!\"\n2. `get_current_timestamp()` - Returns the current timestamp\n\nThe server is still complete and ready to deploy!",
+  "is_deployable": true,
+  "tools": [
+    {
+      "instance": "hello_world_mcp",
+      "name": "hello_world",
+      "description": "Return a simple 'Hello, World!' greeting.",
+      "parameters": {
+        "properties": {},
+        "title": "hello_worldArguments",
+        "type": "object"
+      },
+      "is_async": false,
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "hello_worldOutput",
+        "type": "object"
+      }
+    },
+    {
+      "instance": "hello_world_mcp",
+      "name": "get_current_timestamp",
+      "description": "Get the current timestamp in ISO 8601 format.",
+      "parameters": {
+        "properties": {},
+        "title": "get_current_timestampArguments",
+        "type": "object"
+      },
+      "is_async": false,
+      "output_schema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "get_current_timestampOutput",
+        "type": "object"
+      }
+    }
+  ],
+  "inference_id": null,
+  "episode_id": null,
+  "usage": {
+    "prompt_tokens": 445,
+    "completion_tokens": 258,
+    "total_tokens": 703
+  },
+  "success": true
+}
+
+📝 Testing get user sessions...
+Status: 200
+Response: {
+  "success": true,
+  "sessions": [
+    {
+      "id": "4005f2e6-8577-4b11-9ae1-e9e476de2989",
+      "title": "MCP Server Chat",
+      "created_at": "2025-08-11T08:53:07.023704+00:00",
+      "updated_at": "2025-08-11T08:53:12.965593+00:00"
+    },
+    {
+      "id": "94401584-6e30-4695-a9d1-7d883aa5119e",
+      "title": "MCP Server Chat",
+      "created_at": "2025-08-11T03:55:46.442410+00:00",
+      "updated_at": "2025-08-11T03:55:52.260958+00:00"
+    }
+  ],
+  "total": 2
+}
+Found 2 sessions
+
+📋 Testing get session messages (Session: 4005f2e6-8577-4b11-9ae1-e9e476de2989)...
+Status: 200
+Response: {
+  "success": true,
+  "session_id": "4005f2e6-8577-4b11-9ae1-e9e476de2989",
+  "messages": [
+    {
+      "id": "56ffcd66-d62c-4ed5-99ae-880bb4b2dc7d",
+      "session_id": "4005f2e6-8577-4b11-9ae1-e9e476de2989",
+      "role": "user",
+      "code": null,
+      "next_steps": null,
+      "is_deployable": null,
+      "content": "Create a simple MCP server with a hello_world function that returns 'Hello, World!'",
+      "metadata": null,
+      "created_at": "2025-08-11T08:53:07.031089+00:00"
+    },
+    {
+      "id": "f85d65b3-91b1-4378-8c40-cc8033bfeb38",
+      "session_id": "4005f2e6-8577-4b11-9ae1-e9e476de2989",
+      "role": "assistant",
+      "code": "from mcp.server.fastmcp import FastMCP\n\nhello_world_mcp = FastMCP(name=\"HelloWorldServer\", stateless_http=True)\n\n@hello_world_mcp.tool()\ndef hello_world() -> str:\n    \"\"\"Return a simple 'Hello, World!' greeting.\"\"\"\n    return \"Hello, World!\"",
+      "next_steps": "Congratulations! Your Hello World MCP server is complete and ready to deploy. This simple server provides a hello_world function that returns \"Hello, World!\" when called. You can now deploy this server and connect it to any MCP-compatible AI assistant.",
+      "is_deployable": true,
+      "content": "{\"code\": \"from mcp.server.fastmcp import FastMCP\\n\\nhello_world_mcp = FastMCP(name=\\\"HelloWorldServer\\\", stateless_http=True)\\n\\n@hello_world_mcp.tool()\\ndef hello_world() -> str:\\n    \\\"\\\"\\\"Return a simple 'Hello, World!' greeting.\\\"\\\"\\\"\\n    return \\\"Hello, World!\\\"\", \"next_steps\": \"Congratulations! Your Hello World MCP server is complete and ready to deploy. This simple server provides a hello_world function that returns \\\"Hello, World!\\\" when called. You can now deploy this server and connect it to any MCP-compatible AI assistant.\", \"is_deployable\": true}",
+      "metadata": null,
+      "created_at": "2025-08-11T08:53:12.957929+00:00"
+    },
+    {
+      "id": "8aeece5c-a791-481f-b35c-f283ede8c967",
+      "session_id": "4005f2e6-8577-4b11-9ae1-e9e476de2989",
+      "role": "user",
+      "code": null,
+      "next_steps": null,
+      "is_deployable": null,
+      "content": "Add a function to get the current timestamp",
+      "metadata": null,
+      "created_at": "2025-08-11T08:53:12.970176+00:00"
+    },
+    {
+      "id": "964ba0c6-d6f6-4ce7-b010-3274d2423b23",
+      "session_id": "4005f2e6-8577-4b11-9ae1-e9e476de2989",
+      "role": "assistant",
+      "code": "from mcp.server.fastmcp import FastMCP\nfrom datetime import datetime\n\nhello_world_mcp = FastMCP(name=\"HelloWorldServer\", stateless_http=True)\n\n@hello_world_mcp.tool()\ndef hello_world() -> str:\n    \"\"\"Return a simple 'Hello, World!' greeting.\"\"\"\n    return \"Hello, World!\"\n\n@hello_world_mcp.tool()\ndef get_current_timestamp() -> str:\n    \"\"\"Get the current timestamp in ISO 8601 format.\"\"\"\n    return datetime.now().isoformat()",
+      "next_steps": "Perfect! I've added a `get_current_timestamp()` function to your MCP server. This function returns the current date and time in ISO 8601 format. Your server now has two tools:\n1. `hello_world()` - Returns \"Hello, World!\"\n2. `get_current_timestamp()` - Returns the current timestamp\n\nThe server is still complete and ready to deploy!",
+      "is_deployable": true,
+      "content": "{\"code\": \"from mcp.server.fastmcp import FastMCP\\nfrom datetime import datetime\\n\\nhello_world_mcp = FastMCP(name=\\\"HelloWorldServer\\\", stateless_http=True)\\n\\n@hello_world_mcp.tool()\\ndef hello_world() -> str:\\n    \\\"\\\"\\\"Return a simple 'Hello, World!' greeting.\\\"\\\"\\\"\\n    return \\\"Hello, World!\\\"\\n\\n@hello_world_mcp.tool()\\ndef get_current_timestamp() -> str:\\n    \\\"\\\"\\\"Get the current timestamp in ISO 8601 format.\\\"\\\"\\\"\\n    return datetime.now().isoformat()\", \"next_steps\": \"Perfect! I've added a `get_current_timestamp()` function to your MCP server. This function returns the current date and time in ISO 8601 format. Your server now has two tools:\\n1. `hello_world()` - Returns \\\"Hello, World!\\\"\\n2. `get_current_timestamp()` - Returns the current timestamp\\n\\nThe server is still complete and ready to deploy!\", \"is_deployable\": true}",
+      "metadata": null,
+      "created_at": "2025-08-11T08:53:19.621345+00:00"
+    }
+  ],
+  "total": 4
+}
+Found 4 messages
+
+🔧 Found tool: hello_world
+
+🔧 Testing execute tool 'hello_world' (Chat: 4005f2e6-8577-4b11-9ae1-e9e476de2989)...
+Status: 200
+Response: {
+  "success": true,
+  "result": "Hello, World!",
+  "tool_name": "hello_world",
+  "parameters": {}
+}
+
+🚀 Testing deploy chat server (Chat: 4005f2e6-8577-4b11-9ae1-e9e476de2989)...
+Status: 201
+Response: {
+  "success": true,
+  "message": "MCP server deployed successfully",
+  "server": {
+    "id": "fe1e3a32-304d-441d-b196-2b386720f6a5",
+    "name": "Hello World Server",
+    "slug": "hello-world-server-1",
+    "description": "A simple demonstration MCP server that provides basic greeting and timestamp functionality. It offers tools to return a \"Hello, World!\" message and get the current timestamp in ISO 8601 format.",
+    "version": "1.0.0",
+    "status": "active",
+    "visibility": "private",
+    "category": "chat-generated",
+    "tags": null,
+    "created_at": "2025-08-11T08:53:19.637626+00:00"
+  },
+  "chat_id": "4005f2e6-8577-4b11-9ae1-e9e476de2989"
+}
+
+==================================================
+📊 Chat Flow Test Summary:
+✅ Chat Status: PASS
+💬 Create Chat: PASS
+💬 Continue Chat: PASS
+📝 Get Sessions: PASS
+📋 Get Messages: PASS
+🔧 Execute Tool: PASS
+🚀 Deploy Server: PASS
+
+============================================================
+🏁 FINAL TEST SUMMARY
+============================================================
+✅ ALL TESTS PASSED!
+   The API flow is working correctly
+   Created chat session: 4005f2e6-8577-4b11-9ae1-e9e476de2989
+   Total user sessions: 2
+    """
