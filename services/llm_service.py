@@ -3,6 +3,7 @@ import json
 import os
 import re
 from typing import List, Dict, Any, Optional
+from spoon_ai.llm import LLMManager, ConfigurationManager
 from prompts.constants import (
     CHAT_SESSION_SYSTEM_PROMPT,
     MCP_SERVER_GENERATION_SYSTEM_PROMPT,
@@ -14,6 +15,12 @@ from prompts.constants import (
 
 class LLMService:
     def __init__(self):
+        # Initialize spoon_ai LLM manager
+        self.config_manager = ConfigurationManager()
+        self.llm_manager = LLMManager(self.config_manager)
+        self.default_provider = "openrouter"
+        
+        # Legacy OpenRouter configuration (kept for fallback)
         self.inference_url = "https://openrouter.ai/api/v1/chat/completions"
         self.default_timeout = 30
         self.api_key = os.getenv("OPENROUTER_API_KEY")
@@ -25,14 +32,15 @@ class LLMService:
             "X-Title": "MCP Backend"
         }
 
-    def chat_with_assistant(self, messages: List[Dict[str, str]], chat_session_id: Optional[str], is_new_session: bool = False) -> Dict[str, Any]:
+    async def chat_with_assistant(self, messages: List[Dict[str, str]], chat_session_id: Optional[str], is_new_session: bool = False, provider: Optional[str] = None) -> Dict[str, Any]:
         """
-        Send a chat request to the OpenRouter API
+        Send a chat request using spoon_ai LLM manager
         
         Args:
             messages: List of message objects with 'role' and 'content' keys
             chat_session_id: The chat session ID (if any)
             is_new_session: True if this is a new session, False if continuing existing
+            provider: Optional provider to use (defaults to openrouter)
         
         Returns:
             Dict containing the API response
@@ -45,6 +53,7 @@ class LLMService:
             default_system = CHAT_SESSION_SYSTEM_PROMPT
 
         print(f"[chat_with_assistant] Using system prompt: {default_system}")
+        
         # Prepare messages with system prompt
         api_messages = []
         if default_system:
@@ -55,14 +64,45 @@ class LLMService:
         
         api_messages.extend(messages)
         
-        # Prepare the OpenRouter payload
+        # Use provider or default to openrouter
+        selected_provider = provider or self.default_provider
+        
+        try:
+            print(f"present messages: {api_messages}")
+            print(f"using provider: {selected_provider}")
+            
+            # Use spoon_ai for chat
+            response = await self.llm_manager.chat(
+                messages=api_messages,
+                provider=selected_provider
+            )
+            
+            # Convert spoon_ai response to OpenRouter-like format for compatibility
+            return {
+                "choices": [{
+                    "message": {
+                        "content": response.content,
+                        "role": "assistant"
+                    }
+                }]
+            }
+            
+        except Exception as e:
+            print(f"[chat_with_assistant] spoon_ai request failed: {str(e)}")
+            # Fallback to legacy OpenRouter implementation
+            return await self._legacy_chat_with_assistant(api_messages)
+    
+    async def _legacy_chat_with_assistant(self, api_messages: List[Dict[str, str]]) -> Dict[str, Any]:
+        """
+        Legacy OpenRouter implementation as fallback
+        """
         payload = {
             "model": self.model,
             "messages": api_messages
         }
         
         try:
-            print(f"present payload: {payload}")
+            print(f"[legacy] present payload: {payload}")
             response = requests.post(
                 self.inference_url,
                 headers=self.default_headers,
@@ -79,6 +119,47 @@ class LLMService:
             raise Exception(f"Request failed: {str(e)}")
         except json.JSONDecodeError as e:
             raise Exception(f"Invalid JSON response: {str(e)}")
+
+    async def chat_with_tools(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]], provider: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Send a chat request with tools using spoon_ai LLM manager
+        
+        Args:
+            messages: List of message objects with 'role' and 'content' keys
+            tools: List of tool definitions
+            provider: Optional provider to use (defaults to openrouter)
+        
+        Returns:
+            Dict containing the API response
+        """
+        # Use provider or default to openrouter
+        selected_provider = provider or self.default_provider
+        
+        try:
+            print(f"present messages: {messages}")
+            print(f"present tools: {tools}")
+            print(f"using provider: {selected_provider}")
+            
+            # Use spoon_ai for chat with tools
+            response = await self.llm_manager.chat_with_tools(
+                messages=messages,
+                tools=tools,
+                provider=selected_provider
+            )
+            
+            # Convert spoon_ai response to OpenRouter-like format for compatibility
+            return {
+                "choices": [{
+                    "message": {
+                        "content": response.content,
+                        "role": "assistant"
+                    }
+                }]
+            }
+            
+        except Exception as e:
+            print(f"[chat_with_tools] spoon_ai request failed: {str(e)}")
+            raise Exception(f"Chat with tools failed: {str(e)}")
 
     def extract_content(self, api_response: Dict[str, Any]) -> Dict[str, Any]:
         """
