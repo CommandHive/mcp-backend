@@ -157,6 +157,7 @@ async def chat(request):
         
         user_prompt = body.get("prompt", "")
         chat_session_id = body.get("chat_id", None)
+        provider = body.get("provider", "bedrock")  # Default to openrouter
         
         if not user_prompt:
             return JSONResponse(
@@ -197,11 +198,12 @@ async def chat(request):
         chat_service.add_message(chat_session_id, "user", user_prompt)
         
         # Make request to LLM service
-        result = llm_service.chat_with_assistant(messages, chat_session_id=chat_session_id, is_new_session=is_new_session)
+        print(f"Sending messages to LLM service with provider {provider}: {messages}")
+        result = llm_service.chat_with_assistant(messages, chat_session_id=chat_session_id, is_new_session=is_new_session, provider=provider)
         print(f"LLM service response: {result}")
         # Extract the structured response
         structured_response = llm_service.extract_content(result)
-        
+        print(structured_response)
         # Extract tools from generated code if it exists
         tools_preview = []
         if structured_response.get("code") and structured_response.get("code").strip():
@@ -347,10 +349,10 @@ async def get_session_messages(request):
         # Get all messages for the session
         messages = chat_service.get_conversation_history(session_id)
         
-        # Format messages for response
+        # Format messages for response and extract tools from assistant messages with code
         messages_data = []
         for message in messages:
-            messages_data.append({
+            message_data = {
                 "id": message.id,
                 "session_id": message.session_id,
                 "role": message.role,
@@ -360,7 +362,14 @@ async def get_session_messages(request):
                 "content": message.content,
                 "metadata": message.metadata,
                 "created_at": message.created_at.isoformat() if message.created_at else None
-            })
+            }
+            
+            # Extract tools from assistant messages that have code
+            if message.role == "assistant" and message.code and message.code.strip():
+                tools = extract_tools_from_code(message.code, session_id)
+                message_data["tools"] = tools
+            
+            messages_data.append(message_data)
         
         return JSONResponse({
             "success": True,

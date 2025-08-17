@@ -9,3 +9,4 @@ python-dotenv
 eth-account
 web3
 cryptography
+boto3
