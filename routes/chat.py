@@ -197,7 +197,7 @@ async def chat(request):
         chat_service.add_message(chat_session_id, "user", user_prompt)
         
         # Make request to LLM service
-        result = await llm_service.chat_with_assistant(messages, chat_session_id=chat_session_id, is_new_session=is_new_session)
+        result = llm_service.chat_with_assistant(messages, chat_session_id=chat_session_id, is_new_session=is_new_session)
         print(f"LLM service response: {result}")
         # Extract the structured response
         structured_response = llm_service.extract_content(result)

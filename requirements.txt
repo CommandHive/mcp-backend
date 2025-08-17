@@ -9,4 +9,3 @@ python-dotenv
 eth-account
 web3
 cryptography
-spoon_ai
