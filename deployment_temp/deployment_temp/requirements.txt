@@ -1,0 +1,12 @@
+starlette
+uvicorn
+supabase
+pydantic
+python-jose[cryptography]
+python-multipart
+requests
+python-dotenv
+eth-account
+web3
+cryptography
+boto3
