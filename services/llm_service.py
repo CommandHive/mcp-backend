@@ -188,6 +188,47 @@ class LLMService:
             print(f"[Bedrock] Full traceback: {traceback.format_exc()}")
             raise Exception(f"Bedrock request failed: {str(e)}")
 
+    async def chat_with_tools(self, messages: List[Dict[str, str]], tools: List[Dict[str, Any]], provider: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Send a chat request with tools using spoon_ai LLM manager
+        
+        Args:
+            messages: List of message objects with 'role' and 'content' keys
+            tools: List of tool definitions
+            provider: Optional provider to use (defaults to openrouter)
+        
+        Returns:
+            Dict containing the API response
+        """
+        # Use provider or default to openrouter
+        selected_provider = provider or self.default_provider
+        
+        try:
+            print(f"present messages: {messages}")
+            print(f"present tools: {tools}")
+            print(f"using provider: {selected_provider}")
+            
+            # Use spoon_ai for chat with tools
+            response = await self.llm_manager.chat_with_tools(
+                messages=messages,
+                tools=tools,
+                provider=selected_provider
+            )
+            
+            # Convert spoon_ai response to OpenRouter-like format for compatibility
+            return {
+                "choices": [{
+                    "message": {
+                        "content": response.content,
+                        "role": "assistant"
+                    }
+                }]
+            }
+            
+        except Exception as e:
+            print(f"[chat_with_tools] spoon_ai request failed: {str(e)}")
+            raise Exception(f"Chat with tools failed: {str(e)}")
+
     def extract_content(self, api_response: Dict[str, Any]) -> Dict[str, Any]:
         """
         Extract and parse structured content from the LLM API response

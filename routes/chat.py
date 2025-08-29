@@ -209,6 +209,11 @@ async def chat(request):
         if structured_response.get("code") and structured_response.get("code").strip():
             tools_preview = extract_tools_from_code(structured_response.get("code"), chat_session_id)
         
+        # Extract tools from generated code if it exists
+        tools_preview = []
+        if structured_response.get("code") and structured_response.get("code").strip():
+            tools_preview = extract_tools_from_code(structured_response.get("code"), chat_session_id)
+        
         # Save assistant response to database (store the full structured response)
         chat_service.add_message(
             session_id=chat_session_id,
