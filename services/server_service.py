@@ -11,8 +11,17 @@ class ServerService:
         """Validate server creation data and return list of errors"""
         errors = []
         
-        # Check required fields
-        required_fields = ["name", "source_code", "user_id"]
+        # Check for either files or source_code (but not both)
+        has_files = "files" in data and data["files"]
+        has_source_code = "source_code" in data and data["source_code"]
+        
+        if not has_files and not has_source_code:
+            errors.append("Must provide either 'files' array or 'source_code'")
+        elif has_files and has_source_code:
+            errors.append("Cannot provide both 'files' and 'source_code' - choose one approach")
+        
+        # Check other required fields
+        required_fields = ["name", "user_id"]
         for field in required_fields:
             if field not in data or not data[field]:
                 errors.append(f"Missing required field: {field}")
@@ -25,8 +34,56 @@ class ServerService:
             if len(name) > 100:
                 errors.append("Server name cannot exceed 100 characters")
         
-        # Validate source_code
-        if "source_code" in data and data["source_code"] is not None:
+        # Validate files if provided
+        if has_files:
+            files = data["files"]
+            if not isinstance(files, list):
+                errors.append("Files must be an array")
+            elif len(files) == 0:
+                errors.append("Files array cannot be empty")
+            elif len(files) > 100:
+                errors.append("Cannot have more than 100 files")
+            else:
+                # Check if main.py exists
+                main_py_found = False
+                filenames = set()
+                
+                for i, file_data in enumerate(files):
+                    if not isinstance(file_data, dict):
+                        errors.append(f"File {i} must be an object")
+                        continue
+                    
+                    # Check required file fields
+                    if "filename" not in file_data or not file_data["filename"]:
+                        errors.append(f"File {i} missing required 'filename'")
+                    if "content" not in file_data or not file_data["content"]:
+                        errors.append(f"File {i} missing required 'content'")
+                    
+                    if "filename" in file_data:
+                        filename = file_data["filename"].strip()
+                        
+                        # Check for duplicate filenames
+                        if filename in filenames:
+                            errors.append(f"Duplicate filename: {filename}")
+                        filenames.add(filename)
+                        
+                        # Check if this is main.py
+                        if filename == "main.py":
+                            main_py_found = True
+                        
+                        # Validate filename
+                        if not re.match(r'^[a-zA-Z0-9_/.-]+$', filename):
+                            errors.append(f"Invalid filename: {filename}")
+                        
+                        # Prevent directory traversal
+                        if ".." in filename or filename.startswith("/"):
+                            errors.append(f"Invalid filename (security): {filename}")
+                
+                if not main_py_found:
+                    errors.append("main.py file is required when using files array")
+        
+        # Validate legacy source_code
+        elif has_source_code:
             source_code = data["source_code"].strip()
             if len(source_code) < 10:
                 errors.append("Source code is too short")
@@ -99,7 +156,6 @@ class ServerService:
         server_data = {
             "name": (input_data["name"] or "").strip(),
             "slug": slug,
-            "source_code": (input_data["source_code"] or "").strip(),
             "user_id": input_data["user_id"],
             "description": (input_data.get("description") or "").strip(),
             "version": (input_data.get("version") or "1.0.0").strip(),
@@ -107,6 +163,12 @@ class ServerService:
             "category": (input_data.get("category") or "general").strip(),
             "status": "active"  # Set as active by default
         }
+        
+        # Handle legacy source_code (for backward compatibility)
+        if "source_code" in input_data and input_data["source_code"]:
+            server_data["source_code"] = (input_data["source_code"] or "").strip()
+        else:
+            server_data["source_code"] = None  # Will use files instead
         
         # Handle tags
         if "tags" in input_data and input_data["tags"]:
@@ -129,6 +191,10 @@ class ServerService:
         
         # Create server in database
         server_id = ServerDatabaseService.create_server(server_data)
+        
+        # Handle files if provided
+        if "files" in input_data and input_data["files"]:
+            ServerDatabaseService.create_server_files(server_id, input_data["files"])
         
         # Get and return the created server data
         created_server = ServerDatabaseService.get_server_by_id(server_id)

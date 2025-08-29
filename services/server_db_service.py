@@ -139,3 +139,74 @@ class ServerDatabaseService:
             return None
             
         return dict(result[0])
+    
+    @staticmethod
+    def create_server_files(server_id: str, files: List[Dict[str, str]]) -> None:
+        """Create multiple files for a server"""
+        for file_data in files:
+            file_id = str(uuid.uuid4())
+            insert_query = """
+                INSERT INTO server_files (id, server_id, filename, content, file_type, created_at) 
+                VALUES (%s, %s, %s, %s, %s, NOW())
+            """
+            supabase_client.execute_query(insert_query, (
+                file_id,
+                server_id,
+                file_data['filename'],
+                file_data['content'],
+                file_data.get('file_type', 'python')
+            ))
+    
+    @staticmethod
+    def get_server_files(server_slug: str) -> List[Dict[str, Any]]:
+        """Get all files for a server by slug"""
+        query = """
+            SELECT sf.filename, sf.content, sf.file_type, sf.created_at
+            FROM server_files sf
+            JOIN servers s ON sf.server_id = s.id
+            WHERE s.slug = %s AND s.status = 'active'
+            ORDER BY sf.filename
+        """
+        result = supabase_client.execute_query(query, (server_slug,))
+        return [dict(row) for row in result] if result else []
+    
+    @staticmethod
+    def get_server_with_files(server_slug: str) -> Optional[Dict[str, Any]]:
+        """Get server with all its files for execution"""
+        # First get server info
+        server_query = """
+            SELECT id, name, slug, status, source_code
+            FROM servers 
+            WHERE slug = %s AND status = 'active'
+        """
+        server_result = supabase_client.execute_query(server_query, (server_slug,))
+        
+        if not server_result:
+            return None
+        
+        server_data = dict(server_result[0])
+        
+        # Get files for this server
+        files = ServerDatabaseService.get_server_files(server_slug)
+        server_data['files'] = files
+        
+        # Check if we have files or just legacy source_code
+        server_data['has_multiple_files'] = len(files) > 0
+        
+        return server_data
+    
+    @staticmethod
+    def update_server_files(server_id: str, files: List[Dict[str, str]]) -> None:
+        """Update server files by deleting old ones and creating new ones"""
+        # Delete existing files
+        delete_query = "DELETE FROM server_files WHERE server_id = %s"
+        supabase_client.execute_query(delete_query, (server_id,))
+        
+        # Create new files
+        ServerDatabaseService.create_server_files(server_id, files)
+    
+    @staticmethod
+    def delete_server_files(server_id: str) -> None:
+        """Delete all files for a server"""
+        delete_query = "DELETE FROM server_files WHERE server_id = %s"
+        supabase_client.execute_query(delete_query, (server_id,))
