@@ -26,7 +26,7 @@ middleware = [
         allow_methods=["*"],
         allow_headers=["*"],
     ),
-    #Middleware(JWTMiddleware)
+    Middleware(JWTMiddleware)
 ]
 pprint(servers_router.routes)
 routes = [

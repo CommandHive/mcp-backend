@@ -2,6 +2,7 @@ import json
 import uuid
 from typing import Optional, Dict, List, Any
 from services.supabase_client import supabase_client
+from services.filesystem_service import filesystem_service
 
 
 class ServerDatabaseService:
@@ -31,10 +32,16 @@ class ServerDatabaseService:
         """Create a new server in the database and return the server ID"""
         server_id = str(uuid.uuid4())
         
+        # Create server directory on filesystem
+        folder_path = filesystem_service.create_server_directory(
+            server_data['user_id'], 
+            server_data['slug']
+        )
+        
         insert_query = """
             INSERT INTO servers (
                 id, user_id, name, slug, description, version, 
-                status, visibility, source_code, tags, category, 
+                status, visibility, folder_path, tags, category, 
                 total_requests, is_featured, created_at, updated_at
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW()
@@ -53,7 +60,7 @@ class ServerDatabaseService:
             server_data.get('version', '1.0.0'),
             server_data.get('status', 'active'),
             server_data.get('visibility', 'private'),
-            server_data['source_code'],
+            folder_path,
             tags_json,
             server_data.get('category', 'general'),
             0,  # total_requests
@@ -67,7 +74,7 @@ class ServerDatabaseService:
         """Get server data by ID"""
         query = """
             SELECT id, name, slug, description, version, status, visibility, 
-                   category, tags, created_at
+                   category, tags, folder_path, created_at
             FROM servers 
             WHERE id = %s
         """
@@ -95,7 +102,7 @@ class ServerDatabaseService:
     def get_server_by_slug(slug: str) -> Optional[Dict[str, Any]]:
         """Get server data by slug"""
         query = """
-            SELECT id, name, slug, description, version, status, created_at
+            SELECT id, name, slug, description, version, status, folder_path, created_at
             FROM servers 
             WHERE slug = %s
         """
@@ -126,10 +133,10 @@ class ServerDatabaseService:
         return [dict(row) for row in result] if result else []
     
     @staticmethod
-    def get_server_with_source_code(slug: str) -> Optional[Dict[str, Any]]:
-        """Get server with source code for execution"""
+    def get_server_with_folder_path(slug: str) -> Optional[Dict[str, Any]]:
+        """Get server with folder path for execution"""
         query = """
-            SELECT id, name, slug, source_code, status
+            SELECT id, name, slug, folder_path, status
             FROM servers 
             WHERE slug = %s AND status = 'active'
         """
@@ -142,40 +149,61 @@ class ServerDatabaseService:
     
     @staticmethod
     def create_server_files(server_id: str, files: List[Dict[str, str]]) -> None:
-        """Create multiple files for a server"""
-        for file_data in files:
+        """Create multiple files for a server and store them on filesystem"""
+        # Get server folder path
+        server_query = "SELECT folder_path FROM servers WHERE id = %s"
+        server_result = supabase_client.execute_query(server_query, (server_id,))
+        
+        if not server_result:
+            raise ValueError(f"Server {server_id} not found")
+        
+        folder_path = server_result[0][0]
+        if not folder_path:
+            raise ValueError(f"No folder path set for server {server_id}")
+        
+        # Write files to filesystem
+        created_file_paths = filesystem_service.write_server_files(folder_path, files)
+        
+        # Store file metadata in database (path instead of content)
+        for file_data, file_path in zip(files, created_file_paths):
             file_id = str(uuid.uuid4())
             insert_query = """
-                INSERT INTO server_files (id, server_id, filename, content, file_type, created_at) 
+                INSERT INTO server_files (id, server_id, filename, file_path, file_type, created_at) 
                 VALUES (%s, %s, %s, %s, %s, NOW())
             """
             supabase_client.execute_query(insert_query, (
                 file_id,
                 server_id,
                 file_data['filename'],
-                file_data['content'],
+                file_path,
                 file_data.get('file_type', 'python')
             ))
     
     @staticmethod
     def get_server_files(server_slug: str) -> List[Dict[str, Any]]:
-        """Get all files for a server by slug"""
-        query = """
-            SELECT sf.filename, sf.content, sf.file_type, sf.created_at
-            FROM server_files sf
-            JOIN servers s ON sf.server_id = s.id
-            WHERE s.slug = %s AND s.status = 'active'
-            ORDER BY sf.filename
+        """Get all files for a server by slug from filesystem"""
+        # Get server folder path
+        server_query = """
+            SELECT folder_path
+            FROM servers 
+            WHERE slug = %s AND status = 'active'
         """
-        result = supabase_client.execute_query(query, (server_slug,))
-        return [dict(row) for row in result] if result else []
+        server_result = supabase_client.execute_query(server_query, (server_slug,))
+        
+        if not server_result or not server_result[0][0]:
+            return []
+        
+        folder_path = server_result[0][0]
+        
+        # Read files from filesystem
+        return filesystem_service.read_server_files(folder_path)
     
     @staticmethod
     def get_server_with_files(server_slug: str) -> Optional[Dict[str, Any]]:
         """Get server with all its files for execution"""
         # First get server info
         server_query = """
-            SELECT id, name, slug, status, source_code
+            SELECT id, name, slug, status, folder_path
             FROM servers 
             WHERE slug = %s AND status = 'active'
         """
@@ -186,27 +214,48 @@ class ServerDatabaseService:
         
         server_data = dict(server_result[0])
         
-        # Get files for this server
+        # Get files for this server from filesystem
         files = ServerDatabaseService.get_server_files(server_slug)
         server_data['files'] = files
         
-        # Check if we have files or just legacy source_code
-        server_data['has_multiple_files'] = len(files) > 0
+        # All servers now use multiple files approach
+        server_data['has_multiple_files'] = True
         
         return server_data
     
     @staticmethod
     def update_server_files(server_id: str, files: List[Dict[str, str]]) -> None:
-        """Update server files by deleting old ones and creating new ones"""
-        # Delete existing files
+        """Update server files by replacing filesystem files and database records"""
+        # Get server folder path
+        server_query = "SELECT folder_path FROM servers WHERE id = %s"
+        server_result = supabase_client.execute_query(server_query, (server_id,))
+        
+        if not server_result or not server_result[0][0]:
+            raise ValueError(f"Server {server_id} not found or has no folder path")
+        
+        folder_path = server_result[0][0]
+        
+        # Update files on filesystem
+        filesystem_service.update_server_files(folder_path, files)
+        
+        # Delete existing file records
         delete_query = "DELETE FROM server_files WHERE server_id = %s"
         supabase_client.execute_query(delete_query, (server_id,))
         
-        # Create new files
+        # Create new file records
         ServerDatabaseService.create_server_files(server_id, files)
     
     @staticmethod
     def delete_server_files(server_id: str) -> None:
-        """Delete all files for a server"""
+        """Delete all files for a server from both filesystem and database"""
+        # Get server folder path
+        server_query = "SELECT folder_path FROM servers WHERE id = %s"
+        server_result = supabase_client.execute_query(server_query, (server_id,))
+        
+        if server_result and server_result[0][0]:
+            folder_path = server_result[0][0]
+            filesystem_service.delete_server_directory(folder_path)
+        
+        # Delete database records
         delete_query = "DELETE FROM server_files WHERE server_id = %s"
         supabase_client.execute_query(delete_query, (server_id,))

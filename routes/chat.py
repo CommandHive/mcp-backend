@@ -1,15 +1,55 @@
 from starlette.routing import Router, Route
 from starlette.responses import JSONResponse
 from services.chat_service import chat_service
+from services.claude_code_service import claude_code_service
 from services.llm_service import llm_service
 from services.auth_service import auth_service
 from services.user_service import user_service
-from services.server_code_service import ServerCodeService
 from services.server_service import ServerService
-from services.llm_metadata_service import llm_metadata_service
+from services.filesystem_service import filesystem_service
 from mcp.server.fastmcp import FastMCP
 import json
 import inspect
+import os
+from pathlib import Path
+
+
+def _is_response_complete(response):
+    """Check if Claude Code response is complete"""
+    content = response.get('content', '')
+    
+    if not content.strip():
+        return False
+    
+    # Check for common completion indicators
+    has_main_function = 'if __name__ == "__main__"' in content
+    has_imports = any(line.strip().startswith('import') or line.strip().startswith('from') 
+                     for line in content.split('\n'))
+    has_fastmcp = 'FastMCP' in content
+    
+    return has_main_function and has_imports and has_fastmcp
+
+
+def _validate_generated_code(code):
+    """Validate that generated code is syntactically correct"""
+    if not code.strip():
+        return False
+        
+    try:
+        compile(code, '<string>', 'exec')
+        return True
+    except SyntaxError:
+        return False
+
+
+def _is_code_deployable(code):
+    """Check if code is ready for deployment"""
+    if not code.strip():
+        return False
+        
+    return (_validate_generated_code(code) and 
+            'FastMCP' in code and 
+            len(code.strip()) > 100)  # Minimum code length
 
 
 def extract_tools_from_code(code: str, chat_session_id: str):
@@ -84,17 +124,32 @@ async def execute_tool(request):
         body = await request.json()
         parameters = body.get("parameters", {})
         
-        # Get the latest code from chat session
-        messages = chat_service.get_conversation_history(chat_id)
-        latest_code = None
+        # Get the chat session to find associated server
+        chat_session = chat_service.get_chat_session(chat_id)
+        if not chat_session:
+            return JSONResponse({"error": "Chat session not found"}, status_code=404)
         
-        for message in reversed(messages):
-            if message.role == "assistant" and message.code:
-                latest_code = message.code
+        # Look for generated server files in session directory
+        session_dir = Path("mcp_servers") / chat_id
+        if not session_dir.exists():
+            return JSONResponse({"error": "No server files found in this chat"}, status_code=404)
+        
+        # Read files from session directory
+        files = filesystem_service.read_server_files(str(session_dir))
+        if not files:
+            return JSONResponse({"error": "No server files found in this chat"}, status_code=404)
+        
+        # Find main.py for execution
+        main_file = None
+        for file_data in files:
+            if file_data['filename'] == 'main.py':
+                main_file = file_data
                 break
         
-        if not latest_code:
-            return JSONResponse({"error": "No executable code found in this chat"}, status_code=404)
+        if not main_file:
+            return JSONResponse({"error": "No main.py found in chat session"}, status_code=404)
+        
+        latest_code = main_file['content']
         
         # Execute the code and find the tool
         try:
@@ -152,7 +207,6 @@ async def chat(request):
         
         user_data = request.state.user
         user_id = user_data["id"]  # Use actual user.id instead of email
-        
         body = await request.json()
         
         user_prompt = body.get("prompt", "")
@@ -197,13 +251,82 @@ async def chat(request):
         # Save user message to database
         chat_service.add_message(chat_session_id, "user", user_prompt)
         
-        # Make request to LLM service
-        print(f"Sending messages to LLM service with provider {provider}: {messages}")
-        result = llm_service.chat_with_assistant(messages, chat_session_id=chat_session_id, is_new_session=is_new_session, provider=provider)
-        print(f"LLM service response: {result}")
-        # Extract the structured response
-        structured_response = llm_service.extract_content(result)
-        print(structured_response)
+        # Create working directory for this session
+        working_dir = None
+        if is_new_session:
+            # For new sessions, create a temporary working directory
+            session_dir = Path("mcp_servers") / chat_session_id
+            session_dir.mkdir(parents=True, exist_ok=True)
+            working_dir = str(session_dir)
+        
+        # Make request to Claude Code SDK
+        print(f"Sending messages to Claude Code SDK: {messages}")
+        
+        if is_new_session:
+            # Generate MCP server for new sessions
+            user_prompt = messages[-1]['content'] if messages else ""
+            result = await claude_code_service.generate_mcp_server(user_prompt, working_dir)
+        else:
+            # Continue chat for existing sessions
+            result = await claude_code_service.chat_with_claude(messages, working_dir, is_new_session)
+        
+        print(f"Claude Code SDK response: {result}")
+        
+        # Wait for complete response with validation
+        max_retries = 3
+        retry_count = 0
+        
+        # Continue collecting response until complete
+        while retry_count < max_retries and result.get('success'):
+            if _is_response_complete(result):
+                break
+                
+            # Check if more content is available
+            if result.get('has_more_content', False):
+                try:
+                    # Continue collecting response
+                    additional_result = await claude_code_service.continue_generation(
+                        chat_session_id, result.get('context', {})
+                    )
+                    
+                    if additional_result.get('success'):
+                        # Merge responses
+                        existing_content = result.get('content', '')
+                        new_content = additional_result.get('content', '')
+                        result['content'] = existing_content + new_content
+                        
+                        # Update other fields
+                        result.update({
+                            'next_steps': additional_result.get('next_steps', result.get('next_steps')),
+                            'is_deployable': additional_result.get('is_deployable', result.get('is_deployable')),
+                            'context': additional_result.get('context', result.get('context'))
+                        })
+                    else:
+                        break
+                        
+                except Exception as e:
+                    print(f"Error continuing generation: {e}")
+                    break
+            else:
+                break
+                
+            retry_count += 1
+
+        # Structure response for compatibility with validation
+        if result.get('success'):
+            code_content = result.get('content', '')
+            
+            structured_response = {
+                "code": code_content,
+                "next_steps": result.get('next_steps', 'Review and deploy the server'),
+                "is_deployable": _is_code_deployable(code_content) and result.get('is_deployable', False)
+            }
+        else:
+            structured_response = {
+                "code": "",
+                "next_steps": f"Error: {result.get('error', 'Unknown error')}",
+                "is_deployable": False
+            }
         # Extract tools from generated code if it exists
         tools_preview = []
         if structured_response.get("code") and structured_response.get("code").strip():
@@ -390,6 +513,170 @@ async def get_session_messages(request):
         )
 
 
+async def get_chat_files(request):
+    """Get all files from a chat session's generated code"""
+    try:
+        # Get authenticated user
+        if not hasattr(request.state, 'user') or not request.state.user:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
+        
+        chat_id = request.path_params.get("chat_id")
+        
+        # Get the chat session to verify ownership
+        chat_session = chat_service.get_chat_session(chat_id)
+        if not chat_session:
+            return JSONResponse({"error": "Chat session not found"}, status_code=404)
+        
+        # Look for generated server files in session directory
+        session_dir = Path("mcp_servers") / chat_id
+        if not session_dir.exists():
+            return JSONResponse({"success": True, "files": []})
+        
+        # Read files from session directory
+        files = filesystem_service.read_server_files(str(session_dir))
+        
+        # Convert files to tree structure
+        file_tree = _build_file_tree(files)
+        
+        return JSONResponse({
+            "success": True,
+            "files": file_tree,
+            "total": len(files)
+        })
+        
+    except Exception as e:
+        return JSONResponse({"error": f"Internal server error: {str(e)}"}, status_code=500)
+
+
+def _build_file_tree(files):
+    """Convert flat file list to nested tree structure"""
+    tree = []
+    
+    for file_data in files:
+        path_parts = file_data['filename'].split('/')
+        current_level = tree
+        
+        # Build nested structure
+        for i, part in enumerate(path_parts):
+            if i == len(path_parts) - 1:  # This is a file
+                current_level.append({
+                    "name": part,
+                    "type": "file",
+                    "path": file_data['filename'],
+                    "content": file_data['content']
+                })
+            else:  # This is a folder
+                # Look for existing folder
+                folder = next((item for item in current_level if item["name"] == part and item["type"] == "folder"), None)
+                if not folder:
+                    folder = {
+                        "name": part,
+                        "type": "folder",
+                        "path": '/'.join(path_parts[:i+1]),
+                        "children": []
+                    }
+                    current_level.append(folder)
+                current_level = folder["children"]
+    
+    return tree
+
+
+async def get_chat_file_content(request):
+    """Get specific file content from a chat session"""
+    try:
+        # Get authenticated user
+        if not hasattr(request.state, 'user') or not request.state.user:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
+        
+        chat_id = request.path_params.get("chat_id")
+        file_path = request.path_params.get("file_path")
+        
+        # Get the chat session to verify ownership
+        chat_session = chat_service.get_chat_session(chat_id)
+        if not chat_session:
+            return JSONResponse({"error": "Chat session not found"}, status_code=404)
+        
+        # Look for the specific file
+        session_dir = Path("mcp_servers") / chat_id
+        if not session_dir.exists():
+            return JSONResponse({"error": "No files found in this chat session"}, status_code=404)
+        
+        # Read the specific file
+        target_file = session_dir / file_path
+        if not target_file.exists() or not target_file.is_file():
+            return JSONResponse({"error": "File not found"}, status_code=404)
+        
+        # Security check: ensure file is within session directory
+        try:
+            target_file.resolve().relative_to(session_dir.resolve())
+        except ValueError:
+            return JSONResponse({"error": "Access denied"}, status_code=403)
+        
+        try:
+            content = target_file.read_text(encoding='utf-8')
+            return JSONResponse({
+                "success": True,
+                "filename": file_path,
+                "content": content,
+                "file_type": filesystem_service._get_file_type(target_file.suffix)
+            })
+        except Exception as e:
+            return JSONResponse({"error": f"Error reading file: {str(e)}"}, status_code=500)
+        
+    except Exception as e:
+        return JSONResponse({"error": f"Internal server error: {str(e)}"}, status_code=500)
+
+
+async def update_chat_file(request):
+    """Update file content in a chat session"""
+    try:
+        # Get authenticated user
+        if not hasattr(request.state, 'user') or not request.state.user:
+            return JSONResponse({"error": "Authentication required"}, status_code=401)
+        
+        chat_id = request.path_params.get("chat_id")
+        file_path = request.path_params.get("file_path")
+        body = await request.json()
+        new_content = body.get("content", "")
+        
+        # Get the chat session to verify ownership
+        chat_session = chat_service.get_chat_session(chat_id)
+        if not chat_session:
+            return JSONResponse({"error": "Chat session not found"}, status_code=404)
+        
+        # Look for the specific file
+        session_dir = Path("mcp_servers") / chat_id
+        if not session_dir.exists():
+            return JSONResponse({"error": "No files found in this chat session"}, status_code=404)
+        
+        # Target file path
+        target_file = session_dir / file_path
+        
+        # Security check: ensure file is within session directory
+        try:
+            target_file.resolve().relative_to(session_dir.resolve())
+        except ValueError:
+            return JSONResponse({"error": "Access denied"}, status_code=403)
+        
+        # Create directory if it doesn't exist
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Write the updated content
+            target_file.write_text(new_content, encoding='utf-8')
+            
+            return JSONResponse({
+                "success": True,
+                "message": "File updated successfully",
+                "filename": file_path
+            })
+        except Exception as e:
+            return JSONResponse({"error": f"Error updating file: {str(e)}"}, status_code=500)
+        
+    except Exception as e:
+        return JSONResponse({"error": f"Internal server error: {str(e)}"}, status_code=500)
+
+
 async def deploy_chat_server(request):
     """Deploy MCP server from chat session's generated code"""
     try:
@@ -404,25 +691,32 @@ async def deploy_chat_server(request):
         chat_id = request.path_params.get("chat_id")
         body = await request.json()
         
-        # Get the latest deployable code from chat session
-        messages = chat_service.get_conversation_history(chat_id)
-        latest_code = None
+        # Check if chat session has deployable server files
+        session_dir = Path("mcp_servers") / chat_id
+        if not session_dir.exists():
+            return JSONResponse({"error": "No server files found in this chat session"}, status_code=404)
         
-        for message in reversed(messages):
-            if message.role == "assistant" and message.code and message.is_deployable:
-                latest_code = message.code
-                break
+        # Check for main.py file (required for deployment)
+        main_file = session_dir / "main.py"
+        if not main_file.exists():
+            return JSONResponse({"error": "No deployable server found in this chat session"}, status_code=404)
         
-        if not latest_code:
+        # Read all files for deployment
+        files = filesystem_service.read_server_files(str(session_dir))
+        if not files:
             return JSONResponse({"error": "No deployable code found in this chat session"}, status_code=404)
         
-        # Get server name and description from LLM API based on the code
+        # Extract server name and description from the session directory
         try:
-            metadata = llm_metadata_service.extract_name_and_description(latest_code)
-            server_name = metadata.get("name") or f"MCP Server from Chat {chat_id}"
-            description = metadata.get("description") or "Deployed MCP server from chat session"
+            metadata_result = await claude_code_service.extract_server_metadata(str(session_dir))
+            if metadata_result.get('success'):
+                metadata = metadata_result['metadata']
+                server_name = metadata.get("name") or f"MCP Server from Chat {chat_id}"
+                description = metadata.get("description") or "Deployed MCP server from chat session"
+            else:
+                raise Exception(metadata_result.get('error', 'Failed to extract metadata'))
         except Exception as e:
-            print(f"Failed to extract metadata from LLM: {e}")
+            print(f"Failed to extract metadata from Claude Code SDK: {e}")
             # Fallback to request body or defaults
             server_name = body.get("name") or f"MCP Server from Chat {chat_id}"
             description = body.get("description") or "Deployed MCP server from chat session"
@@ -436,7 +730,7 @@ async def deploy_chat_server(request):
         server_data = {
             "name": server_name,
             "user_id": user_id,
-            "source_code": latest_code,
+            "files": files,  # Use files from session directory
             "description": description,
             "version": "1.0.0",
             "visibility": "private",
@@ -467,6 +761,9 @@ router = Router(routes=[
     Route("/create", chat, methods=["POST"]),
     Route("/sessions", get_user_sessions, methods=["GET"]),
     Route("/sessions/{session_id}/messages", get_session_messages, methods=["GET"]),
+    Route("/{chat_id}/files", get_chat_files, methods=["GET"]),
+    Route("/{chat_id}/files/{file_path:path}", get_chat_file_content, methods=["GET"]),
+    Route("/{chat_id}/files/{file_path:path}", update_chat_file, methods=["PUT"]),
     Route("/{chat_id}/tools/{tool_name}/execute", execute_tool, methods=["POST"]),
     Route("/{chat_id}/deploy", deploy_chat_server, methods=["POST"]),
     Route("/status", chat_handler, methods=["GET"])

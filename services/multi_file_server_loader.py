@@ -9,9 +9,9 @@ from mcp.server.fastmcp import FastMCP
 
 
 class MultiFileServerLoader:
-    """Handles loading MCP servers from multiple files stored in database"""
+    """Handles loading MCP servers from persistent filesystem directories"""
     
-    def __init__(self, base_path: str = "/tmp/mcp_servers"):
+    def __init__(self, base_path: str = "mcp_servers"):
         """Initialize loader with base path for server files"""
         self.base_path = Path(base_path)
         self.base_path.mkdir(exist_ok=True, mode=0o755)
@@ -25,35 +25,28 @@ class MultiFileServerLoader:
         clean_name = clean_name.replace('..', '').replace('~', '')
         return clean_name
     
-    def _create_server_directory(self, server_slug: str) -> Path:
-        """Create and return server directory path"""
-        server_dir = self.base_path / server_slug
+    def _get_server_directory(self, folder_path: str) -> Path:
+        """Get server directory path from folder_path"""
+        server_dir = Path(folder_path)
         
-        # Clean up existing directory if it exists
-        if server_dir.exists():
-            shutil.rmtree(server_dir)
+        if not server_dir.exists():
+            raise ValueError(f"Server directory does not exist: {folder_path}")
         
-        server_dir.mkdir(parents=True, exist_ok=True)
         return server_dir
     
-    def _write_server_files(self, server_dir: Path, server_files: List[Dict[str, Any]]) -> None:
-        """Write server files to the directory"""
-        for file_data in server_files:
-            filename = self._sanitize_path(file_data['filename'])
-            content = file_data['content']
-            
-            file_path = server_dir / filename
-            
-            # Create subdirectories if needed
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Write file content
-            try:
-                file_path.write_text(content, encoding='utf-8')
-                print(f"Written file: {file_path}")
-            except Exception as e:
-                print(f"Error writing file {filename}: {e}")
-                raise
+    def _validate_server_files(self, server_dir: Path) -> None:
+        """Validate that server directory has required files"""
+        main_file = server_dir / "main.py"
+        if not main_file.exists():
+            raise ValueError(f"main.py not found in server directory: {server_dir}")
+        
+        # Validate that main.py contains FastMCP instance
+        try:
+            content = main_file.read_text(encoding='utf-8')
+            if 'FastMCP' not in content:
+                raise ValueError("main.py must contain a FastMCP instance")
+        except Exception as e:
+            raise ValueError(f"Error validating main.py: {e}")
     
     def _install_requirements(self, server_dir: Path) -> None:
         """Install requirements.txt if it exists"""
@@ -142,16 +135,16 @@ class MultiFileServerLoader:
             if server_dir_str in sys.path:
                 sys.path.remove(server_dir_str)
     
-    async def load_server_from_files(self, server_slug: str, server_files: List[Dict[str, Any]]) -> FastMCP:
-        """Load server from multiple files"""
+    async def load_server_from_folder(self, server_slug: str, folder_path: str) -> FastMCP:
+        """Load server from persistent filesystem folder"""
         try:
-            print(f"Loading multi-file server: {server_slug}")
+            print(f"Loading server from folder: {server_slug} -> {folder_path}")
             
-            # Create server directory
-            server_dir = self._create_server_directory(server_slug)
+            # Get server directory
+            server_dir = self._get_server_directory(folder_path)
             
-            # Write all files to disk
-            self._write_server_files(server_dir, server_files)
+            # Validate server files
+            self._validate_server_files(server_dir)
             
             # Install requirements if present
             self._install_requirements(server_dir)
@@ -159,43 +152,30 @@ class MultiFileServerLoader:
             # Import and return FastMCP instance
             mcp_server = self._import_server_module(server_dir, server_slug)
             
-            print(f"Successfully loaded multi-file server: {server_slug}")
+            print(f"Successfully loaded server: {server_slug}")
             return mcp_server
             
         except Exception as e:
-            print(f"Error loading multi-file server {server_slug}: {e}")
-            # Clean up on failure
-            self.cleanup_server_files(server_slug)
+            print(f"Error loading server {server_slug}: {e}")
             raise
     
-    def cleanup_server_files(self, server_slug: str) -> None:
-        """Clean up server files and module references"""
+    def cleanup_server_module(self, server_slug: str) -> None:
+        """Clean up server module references (but keep files on disk)"""
         try:
             # Remove from loaded modules
             if server_slug in self.loaded_modules:
                 del self.loaded_modules[server_slug]
-            
-            # Remove directory
-            server_dir = self.base_path / server_slug
-            if server_dir.exists():
-                shutil.rmtree(server_dir)
-                print(f"Cleaned up files for server: {server_slug}")
+                print(f"Cleaned up module for server: {server_slug}")
                 
         except Exception as e:
-            print(f"Error cleaning up server {server_slug}: {e}")
+            print(f"Error cleaning up server module {server_slug}: {e}")
     
-    def cleanup_all_servers(self) -> None:
-        """Clean up all server files and modules"""
+    def cleanup_all_modules(self) -> None:
+        """Clean up all loaded modules (but keep files on disk)"""
         try:
             # Clear loaded modules
             self.loaded_modules.clear()
-            
-            # Remove base directory
-            if self.base_path.exists():
-                shutil.rmtree(self.base_path)
-                self.base_path.mkdir(exist_ok=True, mode=0o755)
-                
-            print("Cleaned up all server files")
+            print("Cleaned up all loaded modules")
             
         except Exception as e:
-            print(f"Error cleaning up all servers: {e}")
+            print(f"Error cleaning up all modules: {e}")

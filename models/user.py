@@ -20,6 +20,7 @@ class User(BaseModel):
     subscription_tier: str = "free"
     nonce: Optional[str] = None
     nonce_expires_at: Optional[datetime] = None
+    password_hash: Optional[str] = None
 
 
 class WalletAuthRequest(BaseModel):

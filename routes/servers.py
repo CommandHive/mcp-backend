@@ -21,44 +21,25 @@ class DynamicMCPManager:
     async def load_server_from_db(self, server_slug: str) -> FastMCP:
         """Load an MCP server from database and execute its code"""
         try:
-            # Get server configuration with files from database by slug
+            # Get server configuration with folder path from database by slug
             server_data = ServerDatabaseService.get_server_with_files(server_slug)
             print(f"result from database query {server_data}")
             
             if not server_data:
                 raise ValueError(f"Server with slug '{server_slug}' not found or inactive")
             
-            mcp_server = None
+            # Get folder path from server data
+            folder_path = server_data.get('folder_path')
+            if not folder_path:
+                raise ValueError(f"No folder path found for server {server_slug}")
             
-            # Check if server has multiple files or just legacy source_code
-            if server_data.get('has_multiple_files', False):
-                print(f"Loading multi-file server: {server_slug}")
-                # Use multi-file loader
-                files = server_data.get('files', [])
-                if not files:
-                    raise ValueError(f"No files found for multi-file server {server_slug}")
-                
-                mcp_server = await self.file_loader.load_server_from_files(server_slug, files)
-            else:
-                print(f"Loading legacy single-file server: {server_slug}")
-                # Fall back to legacy single-file execution
-                source_code = server_data.get('source_code')
-                print(f"source code to be executed {source_code}")
-                if not source_code:
-                    raise ValueError(f"No source code found for server {server_slug}")
-                
-                # Execute the source code to create the MCP server
-                exec_globals = {'FastMCP': FastMCP}
-                exec(source_code, exec_globals)
-                
-                # Find the created MCP server instance
-                for var_name, var_value in exec_globals.items():
-                    if isinstance(var_value, FastMCP):
-                        mcp_server = var_value
-                        break
-                
-                if not mcp_server:
-                    raise ValueError(f"No FastMCP instance found in server {server_slug} source code")
+            print(f"Loading server from folder: {server_slug} -> {folder_path}")
+            
+            # Load server from persistent folder
+            mcp_server = await self.file_loader.load_server_from_folder(server_slug, folder_path)
+            
+            if not mcp_server:
+                raise ValueError(f"No FastMCP instance found in server {server_slug}")
             
             # Start the session manager for this server
             stack = contextlib.AsyncExitStack()
@@ -86,8 +67,8 @@ class DynamicMCPManager:
         if server_slug in self.active_servers:
             del self.active_servers[server_slug]
         
-        # Clean up file system resources
-        self.file_loader.cleanup_server_files(server_slug)
+        # Clean up module references (but keep files)
+        self.file_loader.cleanup_server_module(server_slug)
 
 
 # Global instance

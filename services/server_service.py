@@ -1,6 +1,7 @@
 import re
 from typing import Dict, Any, List
 from services.server_db_service import ServerDatabaseService
+from services.filesystem_service import filesystem_service
 
 
 class ServerService:
@@ -11,14 +12,11 @@ class ServerService:
         """Validate server creation data and return list of errors"""
         errors = []
         
-        # Check for either files or source_code (but not both)
+        # Check for files (source_code is no longer supported)
         has_files = "files" in data and data["files"]
-        has_source_code = "source_code" in data and data["source_code"]
         
-        if not has_files and not has_source_code:
-            errors.append("Must provide either 'files' array or 'source_code'")
-        elif has_files and has_source_code:
-            errors.append("Cannot provide both 'files' and 'source_code' - choose one approach")
+        if not has_files:
+            errors.append("Must provide 'files' array with server files")
         
         # Check other required fields
         required_fields = ["name", "user_id"]
@@ -80,13 +78,7 @@ class ServerService:
                             errors.append(f"Invalid filename (security): {filename}")
                 
                 if not main_py_found:
-                    errors.append("main.py file is required when using files array")
-        
-        # Validate legacy source_code
-        elif has_source_code:
-            source_code = data["source_code"].strip()
-            if len(source_code) < 10:
-                errors.append("Source code is too short")
+                    errors.append("main.py file is required in files array")
         
         # Validate user_id (should be a valid UUID)
         if "user_id" in data and data["user_id"] is not None:
@@ -164,12 +156,6 @@ class ServerService:
             "status": "active"  # Set as active by default
         }
         
-        # Handle legacy source_code (for backward compatibility)
-        if "source_code" in input_data and input_data["source_code"]:
-            server_data["source_code"] = (input_data["source_code"] or "").strip()
-        else:
-            server_data["source_code"] = None  # Will use files instead
-        
         # Handle tags
         if "tags" in input_data and input_data["tags"]:
             # Clean and deduplicate tags
@@ -189,10 +175,10 @@ class ServerService:
         # Prepare server data
         server_data = ServerService.prepare_server_data(input_data)
         
-        # Create server in database
+        # Create server in database (this will also create the folder)
         server_id = ServerDatabaseService.create_server(server_data)
         
-        # Handle files if provided
+        # Create files in the server directory
         if "files" in input_data and input_data["files"]:
             ServerDatabaseService.create_server_files(server_id, input_data["files"])
         

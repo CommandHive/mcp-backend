@@ -12,7 +12,7 @@ class Server(BaseModel):
     version: str = "1.0.0"
     status: str = "inactive"
     visibility: str = "private"
-    source_code: Optional[str] = None
+    folder_path: Optional[str] = None  # Path to server folder on filesystem
     package_json: Optional[Dict[str, Any]] = None
     environment_vars: Optional[Dict[str, str]] = None
     container_id: Optional[str] = None
@@ -32,7 +32,7 @@ class ServerVersion(BaseModel):
     id: Optional[str] = None
     server_id: str
     version: str
-    source_code: Optional[str] = None
+    folder_path: Optional[str] = None  # Path to version folder on filesystem
     package_json: Optional[Dict[str, Any]] = None
     changelog: Optional[str] = None
     created_by: str
