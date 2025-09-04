@@ -1,16 +1,18 @@
 from starlette.routing import Router, Route
 from starlette.responses import JSONResponse
 from services.chat_service import chat_service
-from services.claude_code_service import claude_code_service
 from services.llm_service import llm_service
 from services.auth_service import auth_service
 from services.user_service import user_service
 from services.server_service import ServerService
 from services.filesystem_service import filesystem_service
+from services.template_service import template_service
+from services.mcp_execution_service import mcp_execution_service
 from mcp.server.fastmcp import FastMCP
 import json
 import inspect
 import os
+import re
 from pathlib import Path
 
 
@@ -52,61 +54,33 @@ def _is_code_deployable(code):
             len(code.strip()) > 100)  # Minimum code length
 
 
-def extract_tools_from_code(code: str, chat_session_id: str):
-    """Extract tools from generated FastMCP code"""
+def extract_tools_from_session(chat_session_id: str):
+    """Extract tools from MCP server files in session directory"""
     try:
-        # Only expose FastMCP into exec env; block builtins from being mutated
-        exec_globals = {"FastMCP": FastMCP}
-        exec(code, exec_globals)
-
+        session_dir = Path("mcp_servers") / chat_session_id
+        
+        if not session_dir.exists():
+            print(f"Session directory not found: {session_dir}")
+            return []
+        
+        # Use the new execution service to get tools
+        available_tools = mcp_execution_service.get_available_tools(str(session_dir))
+        
         tools = []
-        print(f"Variables in exec_globals: {list(exec_globals.keys())}")
-
-        # Find all FastMCP instances created by the code
-        mcp_instances = []
-        for name, value in exec_globals.items():
-            if isinstance(value, FastMCP):
-                print(f"Found FastMCP instance: {name}")
-                mcp_instances.append((name, value))
-
-        if not mcp_instances:
-            print("No FastMCP instances found in executed code.")
-            return tools
-
-        # Extract tools from each FastMCP instance
-        for inst_name, mcp_server in mcp_instances:
-            tool_manager = getattr(mcp_server, "_tool_manager", None)
-            if tool_manager is None:
-                print(f"{inst_name} has no _tool_manager")
-                continue
-
-            raw_tools = getattr(tool_manager, "_tools", None)
-            if not isinstance(raw_tools, dict):
-                print(f"{inst_name} _tool_manager has no _tools dict")
-                continue
-
-            print(raw_tools)
-            print(f"Tools in instance: {list(raw_tools.keys()) if raw_tools else []}")
-
-            for tool_name, tool_obj in raw_tools.items():
-                # Safely pull fields from FastMCP Tool wrapper
-                fn_meta = getattr(tool_obj, "fn_metadata", None)
-                output_schema = getattr(fn_meta, "output_schema", None) if fn_meta else None
-
-                tools.append({
-                    "instance": inst_name,
-                    "name": getattr(tool_obj, "name", tool_name) or tool_name,
-                    "description": getattr(tool_obj, "description", "") or "",
-                    "parameters": getattr(tool_obj, "parameters", None),
-                    "is_async": bool(getattr(tool_obj, "is_async", False)),
-                    "output_schema": output_schema,
-                })
-
-        print(f"Extracted {len(tools)} tools: {[t['name'] for t in tools]}")
+        for tool_name, tool_info in available_tools.items():
+            tools.append({
+                "name": tool_name,
+                "description": tool_info.get('description', ''),
+                "parameters": tool_info.get('parameters'),
+                "is_async": False,  # FastMCP tools are typically sync
+                "output_schema": None,
+            })
+        
+        print(f"Extracted {len(tools)} tools from session: {[t['name'] for t in tools]}")
         return tools
 
     except Exception as e:
-        print(f"Error extracting tools: {e}")
+        print(f"Error extracting tools from session: {e}")
         import traceback
         traceback.print_exc()
         return []
@@ -134,48 +108,17 @@ async def execute_tool(request):
         if not session_dir.exists():
             return JSONResponse({"error": "No server files found in this chat"}, status_code=404)
         
-        # Read files from session directory
-        files = filesystem_service.read_server_files(str(session_dir))
-        if not files:
-            return JSONResponse({"error": "No server files found in this chat"}, status_code=404)
+        # Validate session directory contains valid MCP server
+        if not mcp_execution_service.validate_session_directory(str(session_dir)):
+            return JSONResponse({"error": "Invalid MCP server in chat session"}, status_code=400)
         
-        # Find main.py for execution
-        main_file = None
-        for file_data in files:
-            if file_data['filename'] == 'main.py':
-                main_file = file_data
-                break
-        
-        if not main_file:
-            return JSONResponse({"error": "No main.py found in chat session"}, status_code=404)
-        
-        latest_code = main_file['content']
-        
-        # Execute the code and find the tool
+        # Execute the tool using the new execution service
         try:
-            exec_globals = {"FastMCP": FastMCP}
-            exec(latest_code, exec_globals)
-            
-            tool_func = None
-            
-            # Find FastMCP instance first
-            for value in exec_globals.values():
-                if isinstance(value, FastMCP):
-                    if hasattr(value, '_tool_manager') and hasattr(value._tool_manager, '_tools'):
-                        if tool_name in value._tool_manager._tools:
-                            tool_func = value._tool_manager._tools[tool_name].fn
-                            break
-            
-            # If not found in FastMCP, look for standalone function
-            if not tool_func:
-                if tool_name in exec_globals and callable(exec_globals[tool_name]):
-                    tool_func = exec_globals[tool_name]
-            
-            if not tool_func:
-                return JSONResponse({"error": f"Tool '{tool_name}' not found"}, status_code=404)
-            
-            # Execute the tool with parameters
-            result = tool_func(**parameters)
+            result = mcp_execution_service.execute_tool(
+                session_dir=str(session_dir),
+                tool_name=tool_name,
+                parameters=parameters
+            )
             
             return JSONResponse({
                 "success": True,
@@ -183,6 +126,13 @@ async def execute_tool(request):
                 "tool_name": tool_name,
                 "parameters": parameters
             })
+            
+        except ValueError as e:
+            return JSONResponse({
+                "success": False,
+                "error": str(e),
+                "tool_name": tool_name
+            }, status_code=404)
             
         except Exception as e:
             return JSONResponse({
@@ -258,17 +208,43 @@ async def chat(request):
             session_dir = Path("mcp_servers") / chat_session_id
             session_dir.mkdir(parents=True, exist_ok=True)
             working_dir = str(session_dir)
+            
+            # Copy template files to new session directory
+            template_service.copy_templates_to_session(working_dir)
         
-        # Make request to Claude Code SDK
-        print(f"Sending messages to Claude Code SDK: {messages}")
+        # Read current main.py content if exists
+        session_dir = Path("mcp_servers") / chat_session_id
+        main_py_path = session_dir / "main.py"
+        current_main_py = ""
         
-        if is_new_session:
-            # Generate MCP server for new sessions
-            user_prompt = messages[-1]['content'] if messages else ""
-            result = await claude_code_service.generate_mcp_server(user_prompt, working_dir)
-        else:
-            # Continue chat for existing sessions
-            result = await claude_code_service.chat_with_claude(messages, working_dir, is_new_session)
+        if main_py_path.exists():
+            try:
+                current_main_py = main_py_path.read_text(encoding='utf-8')
+                print(f"Found existing main.py with {len(current_main_py)} characters")
+            except Exception as e:
+                print(f"Error reading main.py: {e}")
+                current_main_py = ""
+        
+        # Add current main.py content to the last user message if it exists
+        if current_main_py and messages:
+            last_message = messages[-1]
+            if last_message['role'] == 'user':
+                last_message['content'] += f"\n\nCurrent main.py content:\n```python\n{current_main_py}\n```"
+        
+        # Make request to LLM service
+        print(f"Sending messages to LLM service: {messages}")
+        
+        # Use llm_service for both new sessions and continuing chats
+        api_response = llm_service.chat_with_assistant(
+            messages=messages,
+            chat_session_id=chat_session_id,
+            is_new_session=is_new_session,
+            provider=provider
+        )
+        
+        # Extract structured content from LLM response
+        result = llm_service.extract_content(api_response)
+        result['success'] = True
         
         print(f"Claude Code SDK response: {result}")
         
@@ -314,7 +290,52 @@ async def chat(request):
 
         # Structure response for compatibility with validation
         if result.get('success'):
-            code_content = result.get('content', '')
+            code_content = result.get('code', '')
+            
+            # Extract code from <code> tags if present and update main.py
+            code_match = re.search(r'<code>(.*?)</code>', code_content, re.DOTALL)
+            if code_match:
+                extracted_code = code_match.group(1).strip()
+                print(f"Extracted code from <code> tags: {len(extracted_code)} characters")
+                
+                # Always update main.py with the extracted code from LLM response
+                try:
+                    # Ensure the session directory exists
+                    session_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Write the extracted code to main.py
+                    main_py_path.write_text(extracted_code, encoding='utf-8')
+                    print(f"Successfully updated main.py in session {chat_session_id}")
+                    
+                    # Invalidate cached module so tools will be refreshed
+                    mcp_execution_service.cleanup_module_cache(str(session_dir))
+                    print(f"Invalidated module cache for session {chat_session_id}")
+                    
+                    # Validate the written file
+                    if main_py_path.exists() and main_py_path.stat().st_size > 0:
+                        print(f"Verified main.py file was written successfully: {main_py_path.stat().st_size} bytes")
+                        # Use extracted code for response
+                        code_content = extracted_code
+                    else:
+                        print(f"Warning: main.py file appears to be empty or not written correctly")
+                        
+                except Exception as e:
+                    print(f"Error updating main.py: {e}")
+                    # Continue with the response even if file write fails
+            else:
+                # If no <code> tags found but there's code content, try to detect Python code
+                if code_content.strip() and ('def ' in code_content or 'import ' in code_content or 'from ' in code_content):
+                    print("No <code> tags found but detected Python code, updating main.py anyway")
+                    try:
+                        session_dir.mkdir(parents=True, exist_ok=True)
+                        main_py_path.write_text(code_content, encoding='utf-8')
+                        print(f"Updated main.py with raw code content in session {chat_session_id}")
+                        
+                        # Invalidate cached module so tools will be refreshed
+                        mcp_execution_service.cleanup_module_cache(str(session_dir))
+                        print(f"Invalidated module cache for session {chat_session_id}")
+                    except Exception as e:
+                        print(f"Error updating main.py with raw content: {e}")
             
             structured_response = {
                 "code": code_content,
@@ -327,15 +348,8 @@ async def chat(request):
                 "next_steps": f"Error: {result.get('error', 'Unknown error')}",
                 "is_deployable": False
             }
-        # Extract tools from generated code if it exists
-        tools_preview = []
-        if structured_response.get("code") and structured_response.get("code").strip():
-            tools_preview = extract_tools_from_code(structured_response.get("code"), chat_session_id)
-        
-        # Extract tools from generated code if it exists
-        tools_preview = []
-        if structured_response.get("code") and structured_response.get("code").strip():
-            tools_preview = extract_tools_from_code(structured_response.get("code"), chat_session_id)
+        # Extract tools from session directory
+        tools_preview = extract_tools_from_session(chat_session_id)
         
         # Save assistant response to database (store the full structured response)
         chat_service.add_message(
@@ -492,9 +506,9 @@ async def get_session_messages(request):
                 "created_at": message.created_at.isoformat() if message.created_at else None
             }
             
-            # Extract tools from assistant messages that have code
-            if message.role == "assistant" and message.code and message.code.strip():
-                tools = extract_tools_from_code(message.code, session_id)
+            # Extract tools from session directory for assistant messages
+            if message.role == "assistant":
+                tools = extract_tools_from_session(session_id)
                 message_data["tools"] = tools
             
             messages_data.append(message_data)
@@ -665,6 +679,11 @@ async def update_chat_file(request):
             # Write the updated content
             target_file.write_text(new_content, encoding='utf-8')
             
+            # Invalidate cached module if main.py was updated so tools will be refreshed
+            if file_path == "main.py":
+                mcp_execution_service.cleanup_module_cache(str(session_dir))
+                print(f"Invalidated module cache for session {chat_id} after manual main.py update")
+            
             return JSONResponse({
                 "success": True,
                 "message": "File updated successfully",
@@ -706,20 +725,9 @@ async def deploy_chat_server(request):
         if not files:
             return JSONResponse({"error": "No deployable code found in this chat session"}, status_code=404)
         
-        # Extract server name and description from the session directory
-        try:
-            metadata_result = await claude_code_service.extract_server_metadata(str(session_dir))
-            if metadata_result.get('success'):
-                metadata = metadata_result['metadata']
-                server_name = metadata.get("name") or f"MCP Server from Chat {chat_id}"
-                description = metadata.get("description") or "Deployed MCP server from chat session"
-            else:
-                raise Exception(metadata_result.get('error', 'Failed to extract metadata'))
-        except Exception as e:
-            print(f"Failed to extract metadata from Claude Code SDK: {e}")
-            # Fallback to request body or defaults
-            server_name = body.get("name") or f"MCP Server from Chat {chat_id}"
-            description = body.get("description") or "Deployed MCP server from chat session"
+        # Use request body or defaults for server metadata
+        server_name = body.get("name") or f"MCP Server from Chat {chat_id}"
+        description = body.get("description") or "Deployed MCP server from chat session"
         
         # Verify chat session belongs to user
         chat_session = chat_service.get_chat_session(chat_id)

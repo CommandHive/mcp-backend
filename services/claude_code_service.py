@@ -42,21 +42,23 @@ class ClaudeCodeService:
 Your task is to create fully functional MCP servers using FastMCP framework.
 
 IMPORTANT REQUIREMENTS:
-1. Always create a main.py file with the FastMCP server instance
-2. Use proper FastMCP decorators (@app.tool(), @app.resource(), etc.)
-3. Include comprehensive error handling and input validation
-4. Add proper docstrings and type hints
-5. Create additional files as needed (utils.py, requirements.txt, etc.)
-6. Make the server production-ready and deployable
+1. Build upon existing template files in the working directory if they exist
+2. Modify or extend the existing main.py file with new functionality
+3. Use proper FastMCP decorators (@app.tool(), @app.resource(), etc.)
+4. Include comprehensive error handling and input validation
+5. Add proper docstrings and type hints
+6. Update requirements.txt with any new dependencies needed
+7. Make the server production-ready and deployable
 
 The user will describe what they want the MCP server to do. Based on their request:
-- Create all necessary files
-- Ensure main.py contains a FastMCP instance
-- Add requirements.txt if external packages are needed
+- Check existing files first (use Read tool to see what's already there)
+- Extend or modify existing functionality rather than starting from scratch
+- Ensure main.py contains all the needed tools and functionality
+- Update requirements.txt if new packages are needed
 - Include proper documentation
 - Test that the server would work correctly
 
-Always write clean, maintainable, and well-documented code."""
+Always write clean, maintainable, and well-documented code that builds upon the existing template structure."""
 
         options = ClaudeCodeOptions(
             system_prompt=system_prompt,
@@ -73,10 +75,11 @@ Always write clean, maintainable, and well-documented code."""
                 await client.query(f"""Create an MCP server based on this request: {user_prompt}
 
 Please:
-1. Create a main.py file with the FastMCP server
-2. Add any additional Python files needed
-3. Include requirements.txt if external packages are needed
-4. Make the server fully functional and ready to deploy""")
+1. First read any existing files in the working directory to understand the current template structure
+2. Build upon the existing main.py file by adding or modifying functionality for the user's request
+3. Update requirements.txt with any new dependencies needed
+4. Add any additional Python files if needed
+5. Make the server fully functional and ready to deploy""")
                 
                 # Collect all responses
                 response_content = []
